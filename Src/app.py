@@ -1,4 +1,6 @@
 import os
+import uuid
+import time
 from flask import Flask, render_template, request, jsonify
 
 current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -14,6 +16,193 @@ current_workflow = {
     "nodes": [],
     "next_id": 100
 }
+
+# 简易调试会话（内存）
+debug_sessions = {}
+
+def _find_start(nodes_data):
+    for n in nodes_data:
+        if n.get('type') == 'start':
+            return n
+    return None
+
+def _node_name(node):
+    props = node.get('properties', {}) or {}
+    return props.get('name') or f"{node.get('type','node')}#{node.get('id')}"
+
+def _session_state_text(sess):
+    cur = sess.get('current_id')
+    stack = sess.get('callstack', [])
+    vars_ = sess.get('vars', {})
+    stack_lines = []
+    if cur is None:
+        stack_lines.append("（已结束）")
+    else:
+        stack_lines.append(f"当前: {cur}")
+    if stack:
+        stack_lines.append("栈:")
+        for s in stack[-10:]:
+            stack_lines.append("  " + s)
+    vars_lines = []
+    if not vars_:
+        vars_lines.append("（无变量）")
+    else:
+        for k in sorted(vars_.keys()):
+            vars_lines.append(f"{k} = {vars_[k]!r}")
+    return {
+        "stackText": "\n".join(stack_lines),
+        "varsText": "\n".join(vars_lines)
+    }
+
+def _step_once(sess):
+    nodes_map = sess['nodes_map']
+    cur_id = sess.get('current_id')
+    logs = []
+    if cur_id is None:
+        return logs, True
+    node = nodes_map.get(cur_id)
+    if not node:
+        logs.append(f"⚠️ 节点 {cur_id} 不存在，结束")
+        sess['current_id'] = None
+        return logs, True
+
+    props = node.get('properties', {}) or {}
+    ntype = node.get('type')
+    name = _node_name(node)
+    logs.append(f"▶ 单步执行 [{ntype}] {name}")
+
+    # 断点：continue 会处理；step 总是执行当前节点
+    vars_ = sess.setdefault('vars', {})
+
+    def goto(nid):
+        sess['current_id'] = nid
+
+    if ntype == 'start':
+        goto(props.get('nextNodeId'))
+    elif ntype == 'sequence':
+        goto(props.get('nextNodeId'))
+    elif ntype == 'print':
+        msg = props.get('message', '')
+        logs.append(f"🖨️ 打印: {msg}")
+        goto(props.get('nextNodeId'))
+    elif ntype == 'loop':
+        # 调试：用 loopFrame 保存迭代状态
+        frame = sess.get('loop_frame')
+        cond_type = props.get('loopConditionType', 'count')
+        loop_count = props.get('loopCount', 1)
+        body_ids = props.get('bodyNodeIds', []) or []
+        next_id = props.get('nextNodeId')
+        if cond_type == 'expr':
+            logs.append(f"🔁 expr 条件未执行化，按 1 次处理: {props.get('loopConditionExpr','')}")
+            loop_count = 1
+        try:
+            loop_count = int(loop_count)
+        except Exception:
+            loop_count = 1
+        loop_count = max(1, loop_count)
+
+        if not frame:
+            frame = {"i": 1, "j": 0, "loop_count": loop_count, "body": body_ids, "next": next_id}
+            sess['loop_frame'] = frame
+            logs.append(f"🔄 进入循环: 共 {loop_count} 次")
+
+        if not frame["body"]:
+            logs.append("⚠️ 循环体为空")
+            # 直接结束循环
+            sess['loop_frame'] = None
+            goto(frame["next"])
+        else:
+            # 执行循环体中的一个节点（按列表逐个 step）
+            bid = frame["body"][frame["j"]]
+            logs.append(f"  ↻ 循环第 {frame['i']} 次 · 第 {frame['j']+1}/{len(frame['body'])} 个节点")
+            frame["j"] += 1
+            if frame["j"] >= len(frame["body"]):
+                frame["j"] = 0
+                frame["i"] += 1
+                if frame["i"] > frame["loop_count"]:
+                    logs.append("✅ 循环结束")
+                    sess['loop_frame'] = None
+                    goto(frame["next"])
+                    return logs, False
+            goto(bid)
+    elif ntype == 'branch':
+        cond = props.get('branchCondition', True)
+        t = props.get('trueBranchId')
+        f = props.get('falseBranchId')
+        logs.append(f"🌿 分支判断: {cond}")
+        goto(t if cond else f)
+    else:
+        logs.append(f"⚠️ 未实现的节点类型: {ntype}，结束")
+        goto(None)
+
+    # 记录调用信息（简化版）
+    sess.setdefault('callstack', []).append(f"{ntype}:{name}")
+    # 是否结束
+    return logs, sess.get('current_id') is None
+
+@app.route('/api/debug/start', methods=['POST'])
+def debug_start():
+    data = request.get_json() or {}
+    nodes_data = data.get('nodes', [])
+    if not nodes_data:
+        return jsonify({"error": "no nodes"}), 400
+    start = _find_start(nodes_data)
+    if not start:
+        return jsonify({"error": "no start node"}), 400
+    sid = str(uuid.uuid4())
+    debug_sessions[sid] = {
+        "created_at": time.time(),
+        "nodes_map": {n['id']: n for n in nodes_data},
+        "current_id": start['id'],
+        "vars": {},
+        "callstack": [],
+        "loop_frame": None,
+    }
+    return jsonify({"session_id": sid, "state": _session_state_text(debug_sessions[sid])})
+
+@app.route('/api/debug/step', methods=['POST'])
+def debug_step():
+    data = request.get_json() or {}
+    sid = data.get('session_id')
+    sess = debug_sessions.get(sid)
+    if not sess:
+        return jsonify({"error": "invalid session"}), 400
+    logs, finished = _step_once(sess)
+    return jsonify({"logs": logs, "finished": finished, "state": _session_state_text(sess)})
+
+@app.route('/api/debug/continue', methods=['POST'])
+def debug_continue():
+    data = request.get_json() or {}
+    sid = data.get('session_id')
+    sess = debug_sessions.get(sid)
+    if not sess:
+        return jsonify({"error": "invalid session"}), 400
+    logs_all = []
+    # 连续执行：遇到断点（当前节点 breakpoint=true 且不是第一次）就停
+    first = True
+    for _ in range(500):
+        cur = sess.get('current_id')
+        if cur is None:
+            break
+        node = sess['nodes_map'].get(cur) or {}
+        bp = (node.get('properties') or {}).get('breakpoint') is True
+        if bp and not first:
+            logs_all.append(f"⛔ 命中断点: {cur}")
+            break
+        first = False
+        logs, finished = _step_once(sess)
+        logs_all.extend(logs)
+        if finished:
+            break
+    return jsonify({"logs": logs_all, "finished": sess.get('current_id') is None, "state": _session_state_text(sess)})
+
+@app.route('/api/debug/stop', methods=['POST'])
+def debug_stop():
+    data = request.get_json() or {}
+    sid = data.get('session_id')
+    if sid in debug_sessions:
+        debug_sessions.pop(sid, None)
+    return jsonify({"status": "ok"})
 
 @app.route('/')
 def index():

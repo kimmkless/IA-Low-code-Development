@@ -52,17 +52,20 @@ export function createNode(type, x, y) {
         type: type,
         x: x,
         y: y,
+        parentId: null,
+        localX: 0,
+        localY: 0,
         properties: {}
     };
     switch(type) {
         case 'start':
-            baseNode.properties = { name: defaultNameForType(type), nextNodeId: null, portPositions: {} };
+            baseNode.properties = { name: defaultNameForType(type), nextNodeId: null, portPositions: {}, breakpoint: false };
             break;
         case 'print':
-            baseNode.properties = { name: defaultNameForType(type), message: "Hello, 智慧农业", nextNodeId: null, portPositions: {} };
+            baseNode.properties = { name: defaultNameForType(type), message: "Hello, 智慧农业", nextNodeId: null, portPositions: {}, breakpoint: false };
             break;
         case 'sequence':
-            baseNode.properties = { name: defaultNameForType(type), comment: "顺序执行", nextNodeId: null, portPositions: {} };
+            baseNode.properties = { name: defaultNameForType(type), comment: "顺序执行", nextNodeId: null, portPositions: {}, breakpoint: false };
             break;
         case 'loop':
             // 循环节点：只包含循环条件 + 循环体（可容纳多个模块）
@@ -74,11 +77,29 @@ export function createNode(type, x, y) {
                 loopConditionExpr: "",
                 bodyNodeIds: [],
                 nextNodeId: null,
-                portPositions: {}
+                portPositions: {},
+                breakpoint: false,
+                headerHeight: 54,
+                minWidth: 260,
+                minHeight: 180
             };
             break;
         case 'branch':
-            baseNode.properties = { name: defaultNameForType(type), branchCondition: true, trueBranchId: null, falseBranchId: null, nextNodeId: null, portPositions: {} };
+            baseNode.properties = {
+                name: defaultNameForType(type),
+                branchCondition: true,
+                trueBranchId: null,
+                falseBranchId: null,
+                // 容器化：可视化包含两侧分支体（支持嵌套）
+                trueBodyNodeIds: [],
+                falseBodyNodeIds: [],
+                nextNodeId: null,
+                portPositions: {},
+                breakpoint: false,
+                headerHeight: 54,
+                minWidth: 320,
+                minHeight: 200
+            };
             break;
         default: break;
     }
@@ -286,8 +307,8 @@ function drawConnections() {
     const fieldColor = {
         nextNodeId: "#3498db",
         loopBody: "#f39c12",
-        trueBranchId: "#2ecc71",
-        falseBranchId: "#e74c3c",
+        trueBody: "#2ecc71",
+        falseBody: "#e74c3c",
     };
 
     for (let node of state.nodes.values()) {
@@ -302,8 +323,10 @@ function drawConnections() {
             }
         }
         if (node.type === 'branch') {
-            if (props.trueBranchId) outgoing.push({ field: 'trueBranchId', toId: props.trueBranchId });
-            if (props.falseBranchId) outgoing.push({ field: 'falseBranchId', toId: props.falseBranchId });
+            const t = Array.isArray(props.trueBodyNodeIds) ? props.trueBodyNodeIds : [];
+            const f = Array.isArray(props.falseBodyNodeIds) ? props.falseBodyNodeIds : [];
+            for (let id of t) if (id) outgoing.push({ field: 'trueBody', toId: id });
+            for (let id of f) if (id) outgoing.push({ field: 'falseBody', toId: id });
         }
 
         for (let conn of outgoing) {
@@ -336,34 +359,62 @@ function drawConnections() {
 // 渲染所有节点和连线（核心渲染函数）
 export function renderCanvas() {
     const canvasDiv = document.getElementById("canvas");
-    // 移除所有节点元素
-    const nodesDivs = canvasDiv.querySelectorAll('.flow-node');
-    nodesDivs.forEach(div => div.remove());
+    // 移除所有节点元素（含容器内部）
+    canvasDiv.querySelectorAll('.flow-node').forEach(div => div.remove());
+    canvasDiv.querySelectorAll('.loop-group').forEach(div => div.remove());
 
-    for (let node of state.nodes.values()) {
+    const childrenByParent = new Map();
+    for (let n of state.nodes.values()) {
+        if (n.parentId != null) {
+            if (!childrenByParent.has(n.parentId)) childrenByParent.set(n.parentId, []);
+            childrenByParent.get(n.parentId).push(n);
+        }
+    }
+
+    const NODE_W = 180;
+    const NODE_H = 80;
+
+    const computeLocalBounds = (nodes) => {
+        if (!nodes.length) return { minX: 0, minY: 0, maxX: 0, maxY: 0 };
+        let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+        for (let n of nodes) {
+            minX = Math.min(minX, n.localX);
+            minY = Math.min(minY, n.localY);
+            maxX = Math.max(maxX, n.localX + NODE_W);
+            maxY = Math.max(maxY, n.localY + NODE_H);
+        }
+        if (!Number.isFinite(minX)) minX = 0;
+        if (!Number.isFinite(minY)) minY = 0;
+        if (!Number.isFinite(maxX)) maxX = 0;
+        if (!Number.isFinite(maxY)) maxY = 0;
+        return { minX, minY, maxX, maxY };
+    };
+
+    const renderNode = (node, mountEl, mode) => {
         const nodeDiv = document.createElement("div");
         nodeDiv.className = "flow-node";
         if (state.selectedNodeId === node.id) nodeDiv.classList.add("selected");
-        nodeDiv.style.left = node.x + "px";
-        nodeDiv.style.top = node.y + "px";
         nodeDiv.style.position = "absolute";
         nodeDiv.setAttribute("data-id", node.id);
+
+        if (mode === 'root') {
+            nodeDiv.style.left = node.x + "px";
+            nodeDiv.style.top = node.y + "px";
+        } else {
+            nodeDiv.style.left = (node.localX || 0) + "px";
+            nodeDiv.style.top = (node.localY || 0) + "px";
+        }
 
         const label = typeLabel(node.type);
         let bodyPreview = "";
         if(node.type === 'print') bodyPreview = `✉️ ${node.properties.message?.substring(0, 20) || "打印"}`;
         else if(node.type === 'loop') {
-            const bodyIds = Array.isArray(node.properties.bodyNodeIds) ? node.properties.bodyNodeIds : [];
-            const names = bodyIds.slice(0, 3).map(id => {
-                const n = state.nodes.get(id);
-                return n ? (n.properties?.name || typeLabel(n.type)) : `#${id}`;
-            });
-            const more = bodyIds.length > 3 ? `...+${bodyIds.length - 3}` : "";
             const condType = node.properties.loopConditionType || "count";
             const condText = condType === 'expr' ? (node.properties.loopConditionExpr || "(空)") : `${node.properties.loopCount ?? 1} 次`;
-            bodyPreview = `🔁 条件: ${escapeHtml(condText)}<br/>体: ${escapeHtml(names.join(" → "))}${more ? " " + escapeHtml(more) : ""}`;
+            const cnt = (Array.isArray(node.properties.bodyNodeIds) ? node.properties.bodyNodeIds.length : 0);
+            bodyPreview = `🔁 条件: ${escapeHtml(condText)}<br/>循环体: ${cnt} 个节点`;
         }
-        else if(node.type === 'branch') bodyPreview = `🌿 条件: ${node.properties.branchCondition ? "真分支" : "假分支"}<br/>True: ${node.properties.trueBranchId ?? "无"} · False: ${node.properties.falseBranchId ?? "无"}`;
+        else if(node.type === 'branch') bodyPreview = `🌿 条件: ${node.properties.branchCondition ? "真分支" : "假分支"}`;
         else if(node.type === 'start') bodyPreview = "入口节点";
         else bodyPreview = node.properties.comment || "顺序节点";
 
@@ -379,7 +430,10 @@ export function renderCanvas() {
             return `top:${fallbackTopPct}%;`;
         };
 
-        // 不同节点“出边”端口不同字段，支持真正的可视化连线编辑（不再弹框选择）。
+        const bpOn = !!node.properties?.breakpoint;
+        const bpDotHtml = `<span class="breakpoint-dot ${bpOn ? 'on' : ''}" data-action="toggleBreakpoint" title="断点（点击切换）"></span>`;
+
+        // 端口
         let connectPointsHtml = '';
         if (node.type === 'start' || node.type === 'print' || node.type === 'sequence') {
             connectPointsHtml = `<div class="connect-point" data-id="${node.id}" data-field="nextNodeId" style="${portStyle('nextNodeId', 50)} --cp-color:#3498db; --cp-hover-color:#2c7da0;" title="端口：下一步（next）【Shift+拖动可移动端口】"></div>`;
@@ -390,54 +444,128 @@ export function renderCanvas() {
             `;
         } else if (node.type === 'branch') {
             connectPointsHtml = `
-                <div class="connect-point" data-id="${node.id}" data-field="trueBranchId" style="${portStyle('trueBranchId', 32)} --cp-color:#2ecc71; --cp-hover-color:#27ae60;" title="端口：真分支（True）【Shift+拖动可移动端口】"></div>
-                <div class="connect-point" data-id="${node.id}" data-field="falseBranchId" style="${portStyle('falseBranchId', 68)} --cp-color:#e74c3c; --cp-hover-color:#c0392b;" title="端口：假分支（False）【Shift+拖动可移动端口】"></div>
+                <div class="connect-point" data-id="${node.id}" data-field="trueBody" style="${portStyle('trueBody', 32)} --cp-color:#2ecc71; --cp-hover-color:#27ae60;" title="端口：真分支体（加入 True 容器）【Shift+拖动可移动端口】"></div>
+                <div class="connect-point" data-id="${node.id}" data-field="falseBody" style="${portStyle('falseBody', 68)} --cp-color:#e74c3c; --cp-hover-color:#c0392b;" title="端口：假分支体（加入 False 容器）【Shift+拖动可移动端口】"></div>
                 <div class="connect-point" data-id="${node.id}" data-field="nextNodeId" style="${portStyle('nextNodeId', 50)} --cp-color:#3498db; --cp-hover-color:#2c7da0;" title="端口：公共后续（next，可选）【Shift+拖动可移动端口】"></div>
             `;
         } else {
             connectPointsHtml = `<div class="connect-point" data-id="${node.id}" data-field="nextNodeId" style="${portStyle('nextNodeId', 50)} --cp-color:#3498db; --cp-hover-color:#2c7da0;" title="端口：下一步（next）【Shift+拖动可移动端口】"></div>`;
         }
 
+        const isContainer = (node.type === 'loop' || node.type === 'branch');
+        if (isContainer) nodeDiv.classList.add('container-node');
+
+        let childrenHtml = '';
+        if (node.type === 'loop') {
+            childrenHtml = `<div class="container-children" data-container="${node.id}" title="循环体容器（可嵌套循环/分支）"></div>`;
+        } else if (node.type === 'branch') {
+            childrenHtml = `
+                <div class="branch-children" data-container="${node.id}">
+                    <div class="branch-col" data-branch="true"><div class="branch-col-title">True</div></div>
+                    <div class="branch-col" data-branch="false"><div class="branch-col-title">False</div></div>
+                </div>
+            `;
+        }
+
         nodeDiv.innerHTML = `
             <div class="node-header">
                 <span title="节点类型">${label}</span>
                 <span class="node-type-badge" title="节点名称">${escapeHtml(nodeName)}</span>
+                ${bpDotHtml}
                 <button class="delete-node-btn" data-id="${node.id}" title="删除节点">🗑️</button>
             </div>
-            <div class="node-body">
-                ${bodyPreview}
+            <div class="node-body ${isContainer ? 'container-body' : ''}">
+                <div>${bodyPreview}</div>
+                ${isContainer ? childrenHtml : ''}
                 ${connectPointsHtml}
             </div>
         `;
+
+        if (node.type === 'loop') {
+            const kids = (childrenByParent.get(node.id) || []);
+            const bounds = computeLocalBounds(kids);
+            const pad = 16;
+            const headerH = node.properties.headerHeight || 54;
+            const minW = node.properties.minWidth || 260;
+            const minH = node.properties.minHeight || 180;
+            const w = Math.max(minW, bounds.maxX - bounds.minX + pad * 2);
+            const h = Math.max(minH, headerH + (bounds.maxY - bounds.minY) + pad * 2 + 40);
+            nodeDiv.style.width = w + 'px';
+            nodeDiv.style.height = h + 'px';
+            const container = nodeDiv.querySelector('.container-children');
+            if (container) container.style.height = Math.max(120, h - headerH - 34) + 'px';
+        }
+        if (node.type === 'branch') {
+            const kids = (childrenByParent.get(node.id) || []);
+            const tKids = kids.filter(k => k.properties?.branchSide === 'true');
+            const fKids = kids.filter(k => k.properties?.branchSide === 'false');
+            const b1 = computeLocalBounds(tKids);
+            const b2 = computeLocalBounds(fKids);
+            const pad = 18;
+            const headerH = node.properties.headerHeight || 54;
+            const minW = node.properties.minWidth || 320;
+            const minH = node.properties.minHeight || 200;
+            const colW = Math.max((b1.maxX - b1.minX), (b2.maxX - b2.minX), 160) + pad * 2;
+            const bodyH = Math.max((b1.maxY - b1.minY), (b2.maxY - b2.minY), 140) + pad * 2;
+            const w = Math.max(minW, colW * 2 + 40);
+            const h = Math.max(minH, headerH + bodyH + 40);
+            nodeDiv.style.width = w + 'px';
+            nodeDiv.style.height = h + 'px';
+            nodeDiv.querySelectorAll('.branch-col').forEach(c => { c.style.height = Math.max(140, h - headerH - 34) + 'px'; });
+        }
+
         nodeDiv.addEventListener("click", (e) => {
             e.stopPropagation();
-            // 拖拽过程中产生的“点击”不要当成选中
-            if (ignoreNextClick) {
-                ignoreNextClick = false;
+            if (ignoreNextClick) { ignoreNextClick = false; return; }
+            if (e.target?.getAttribute && e.target.getAttribute('data-action') === 'toggleBreakpoint') {
+                node.properties.breakpoint = !node.properties.breakpoint;
+                renderCanvas();
+                if (state.selectedNodeId === node.id) renderPropertiesPanel();
                 return;
             }
-            if(e.target.classList.contains("delete-node-btn")) {
+            if(e.target.classList && e.target.classList.contains("delete-node-btn")) {
                 deleteNodeById(node.id);
                 return;
             }
             setSelectedNode(node.id);
         });
-        // 拖拽移动节点
+
         nodeDiv.addEventListener("mousedown", (e) => {
-            if(e.target.classList.contains("delete-node-btn") || e.target.classList.contains("connect-point")) return;
+            if(e.target.classList && (e.target.classList.contains("delete-node-btn") || e.target.classList.contains("connect-point") || e.target.classList.contains("breakpoint-dot"))) return;
             e.stopPropagation();
             isDraggingNode = true;
             currentNodeMoving = node.id;
             didMoveNode = false;
             ignoreNextClick = false;
             const rect = nodeDiv.getBoundingClientRect();
-            const containerRect = canvasDiv.parentElement.getBoundingClientRect();
             dragOffsetX = e.clientX - rect.left;
             dragOffsetY = e.clientY - rect.top;
             nodeDiv.style.cursor = "grabbing";
             e.preventDefault();
         });
-        canvasDiv.appendChild(nodeDiv);
+
+        mountEl.appendChild(nodeDiv);
+
+        if (node.type === 'loop') {
+            const container = nodeDiv.querySelector('.container-children');
+            const kids = (childrenByParent.get(node.id) || []);
+            if (container) for (let kid of kids) renderNode(kid, container, 'child');
+        }
+        if (node.type === 'branch') {
+            const kids = (childrenByParent.get(node.id) || []);
+            const trueCol = nodeDiv.querySelector('.branch-col[data-branch="true"]');
+            const falseCol = nodeDiv.querySelector('.branch-col[data-branch="false"]');
+            for (let kid of kids) {
+                const side = kid.properties?.branchSide;
+                if (side === 'true' && trueCol) renderNode(kid, trueCol, 'child');
+                if (side === 'false' && falseCol) renderNode(kid, falseCol, 'child');
+            }
+        }
+    };
+
+    for (let node of state.nodes.values()) {
+        if (node.parentId != null) continue;
+        renderNode(node, canvasDiv, 'root');
     }
 
     // 绑定连接点拖拽事件
@@ -489,13 +617,25 @@ function onGlobalMouseMove(e) {
     if (isDraggingNode && currentNodeMoving !== null) {
         const node = state.nodes.get(currentNodeMoving);
         if (!node) return;
-        const containerRect = canvasDiv.parentElement.getBoundingClientRect();
-        let newX = e.clientX - dragOffsetX - containerRect.left;
-        let newY = e.clientY - dragOffsetY - containerRect.top;
-        newX = Math.max(5, Math.min(newX, containerRect.width - 180));
-        newY = Math.max(5, Math.min(newY, containerRect.height - 80));
-        node.x = newX;
-        node.y = newY;
+        if (node.parentId != null) {
+            const nodeElem = canvasDiv.querySelector(`.flow-node[data-id="${node.parentId}"]`);
+            // 子节点所在容器（循环体/分支体）
+            const host = document.querySelector(`.flow-node[data-id="${node.parentId}"] .container-children, .flow-node[data-id="${node.parentId}"] .branch-col[data-branch="${node.properties?.branchSide || 'true'}"]`);
+            const rect = (host || nodeElem)?.getBoundingClientRect();
+            if (!rect) return;
+            const newX = e.clientX - dragOffsetX - rect.left;
+            const newY = e.clientY - dragOffsetY - rect.top;
+            node.localX = Math.max(0, newX);
+            node.localY = Math.max(0, newY);
+        } else {
+            const containerRect = canvasDiv.parentElement.getBoundingClientRect();
+            let newX = e.clientX - dragOffsetX - containerRect.left;
+            let newY = e.clientY - dragOffsetY - containerRect.top;
+            newX = Math.max(5, Math.min(newX, containerRect.width - 180));
+            newY = Math.max(5, Math.min(newY, containerRect.height - 80));
+            node.x = newX;
+            node.y = newY;
+        }
         didMoveNode = true;
         renderCanvas();
     } else if (isDraggingPort && draggingPortNodeId !== null && draggingPortField) {
@@ -602,7 +742,30 @@ function createConnection(sourceId, targetId, fieldOverride = null) {
             const arr = Array.isArray(sourceNode.properties.bodyNodeIds) ? sourceNode.properties.bodyNodeIds : [];
             if (!arr.includes(targetId)) arr.push(targetId);
             sourceNode.properties.bodyNodeIds = arr;
+            // 重新挂载到循环容器内部（可嵌套）
+            targetNode.parentId = sourceId;
+            targetNode.localX = Math.max(10, (targetNode.localX || 10));
+            targetNode.localY = Math.max(10, (targetNode.localY || 10));
+            targetNode.x = sourceNode.x + 40;
+            targetNode.y = sourceNode.y + 90;
             addConsoleLog(`加入循环体: ${sourceId} += ${targetId}`, "info");
+            renderCanvas();
+            if (state.selectedNodeId === sourceId) renderPropertiesPanel();
+            return;
+        }
+        if (fieldOverride === 'trueBody' || fieldOverride === 'falseBody') {
+            if (sourceNode.type !== 'branch') return;
+            const side = fieldOverride === 'trueBody' ? 'true' : 'false';
+            const key = side === 'true' ? 'trueBodyNodeIds' : 'falseBodyNodeIds';
+            const arr = Array.isArray(sourceNode.properties[key]) ? sourceNode.properties[key] : [];
+            if (!arr.includes(targetId)) arr.push(targetId);
+            sourceNode.properties[key] = arr;
+            targetNode.parentId = sourceId;
+            if (!targetNode.properties) targetNode.properties = {};
+            targetNode.properties.branchSide = side;
+            targetNode.localX = Math.max(10, (targetNode.localX || 10));
+            targetNode.localY = Math.max(20, (targetNode.localY || 20));
+            addConsoleLog(`加入分支体(${side}): ${sourceId} += ${targetId}`, "info");
             renderCanvas();
             if (state.selectedNodeId === sourceId) renderPropertiesPanel();
             return;
@@ -620,7 +783,7 @@ function createConnection(sourceId, targetId, fieldOverride = null) {
     } else if (sourceNode.type === 'loop') {
         fieldOptions = ['loopBody', 'nextNodeId'];
     } else if (sourceNode.type === 'branch') {
-        fieldOptions = ['trueBranchId', 'falseBranchId', 'nextNodeId'];
+        fieldOptions = ['trueBody', 'falseBody', 'nextNodeId'];
     } else {
         fieldOptions = ['nextNodeId'];
     }

@@ -89,6 +89,100 @@ async function runWorkflow() {
     }
 }
 
+// 调试：会话状态
+let debugSessionId = null;
+
+function setDebugUiRunning(running) {
+    const panel = document.getElementById("debugPanel");
+    if (panel) panel.style.display = running ? "flex" : "none";
+    const cont = document.getElementById("debugContinueBtn");
+    const step = document.getElementById("debugStepBtn");
+    const stop = document.getElementById("debugStopBtn");
+    if (cont) cont.disabled = !running;
+    if (step) step.disabled = !running;
+    if (stop) stop.disabled = !running;
+}
+
+function renderDebugState(st) {
+    const stackBox = document.getElementById("debugStackBox");
+    const varsBox = document.getElementById("debugVarsBox");
+    if (stackBox) stackBox.textContent = st?.stackText || "(空)";
+    if (varsBox) varsBox.textContent = st?.varsText || "(空)";
+}
+
+async function debugStart() {
+    const data = { nodes: Array.from(state.nodes.values()) };
+    const resp = await fetch('/api/debug/start', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data)
+    });
+    const r = await resp.json();
+    if (!resp.ok) {
+        addConsoleLog("进入调试失败: " + (r.error || resp.status), "error");
+        return;
+    }
+    debugSessionId = r.session_id;
+    setDebugUiRunning(true);
+    renderDebugState(r.state);
+    addConsoleLog("🐞 已进入调试模式", "info");
+}
+
+async function debugStep() {
+    if (!debugSessionId) return;
+    const resp = await fetch('/api/debug/step', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ session_id: debugSessionId })
+    });
+    const r = await resp.json();
+    if (!resp.ok) {
+        addConsoleLog("单步失败: " + (r.error || resp.status), "error");
+        return;
+    }
+    if (r.logs) r.logs.forEach(line => addConsoleLog(line, "run"));
+    renderDebugState(r.state);
+    if (r.finished) {
+        addConsoleLog("调试已结束", "info");
+        debugSessionId = null;
+        setDebugUiRunning(false);
+    }
+}
+
+async function debugContinue() {
+    if (!debugSessionId) return;
+    const resp = await fetch('/api/debug/continue', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ session_id: debugSessionId })
+    });
+    const r = await resp.json();
+    if (!resp.ok) {
+        addConsoleLog("继续失败: " + (r.error || resp.status), "error");
+        return;
+    }
+    if (r.logs) r.logs.forEach(line => addConsoleLog(line, "run"));
+    renderDebugState(r.state);
+    if (r.finished) {
+        addConsoleLog("调试已结束", "info");
+        debugSessionId = null;
+        setDebugUiRunning(false);
+    }
+}
+
+async function debugStop() {
+    if (!debugSessionId) return;
+    await fetch('/api/debug/stop', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ session_id: debugSessionId })
+    });
+    debugSessionId = null;
+    setDebugUiRunning(false);
+    renderDebugState(null);
+    addConsoleLog("已停止调试", "info");
+}
+
 // 初始化示例工作流
 function initDemoFlow() {
     const start = createNode("start", 50, 80);
@@ -145,6 +239,15 @@ function bindGlobalButtons() {
             }
         });
     };
+
+    const startDebugBtn = document.getElementById("startDebugBtn");
+    const debugContinueBtn = document.getElementById("debugContinueBtn");
+    const debugStepBtn = document.getElementById("debugStepBtn");
+    const debugStopBtn = document.getElementById("debugStopBtn");
+    if (startDebugBtn) startDebugBtn.onclick = debugStart;
+    if (debugContinueBtn) debugContinueBtn.onclick = debugContinue;
+    if (debugStepBtn) debugStepBtn.onclick = debugStep;
+    if (debugStopBtn) debugStopBtn.onclick = debugStop;
 }
 
 // 初始化所有模块

@@ -44,6 +44,7 @@ export function escapeHtml(str) {
     });
 }
 
+
 // 简易可视化弹窗（替代 prompt/confirm）
 export function showModal({ title, bodyHtml, okText = "确定", cancelText = "取消", showCancel = true, onOk = null, onCancel = null }) {
     const mask = document.getElementById("modalMask");

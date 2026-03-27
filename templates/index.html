@@ -61,6 +61,10 @@
 
         <div class="top-right">
             <button class="run-button" id="runWorkflowBtn" title="运行工作流">▶ 运行工作流</button>
+            <button class="run-button" id="startDebugBtn" title="进入调试模式" style="background:#2c7da0;">🐞 调试</button>
+            <button class="run-button" id="debugContinueBtn" title="继续运行（到断点/结束）" style="background:#34495e;" disabled>⏵ 继续</button>
+            <button class="run-button" id="debugStepBtn" title="单步执行" style="background:#34495e;" disabled>⤼ 单步</button>
+            <button class="run-button" id="debugStopBtn" title="停止调试" style="background:#7f8c8d;" disabled>⏹ 停止</button>
         </div>
     </div>
 
@@ -114,8 +118,21 @@
             <span>📟 运行控制台</span>
             <button class="clear-console" id="clearConsoleBtn" title="清空控制台输出">清空</button>
         </div>
-        <div class="console-output" id="consoleOutput">
-            <div class="log-line">✨ 就绪，拖拽组件至画布构建工作流，点击运行查看效果。</div>
+        <div class="console-split">
+            <div class="console-output" id="consoleOutput">
+                <div class="log-line">✨ 就绪，拖拽组件至画布构建工作流，点击运行查看效果。</div>
+            </div>
+            <div class="debug-panel" id="debugPanel" style="display:none;">
+                <div class="debug-title">🐞 调试信息</div>
+                <div class="debug-section">
+                    <div class="debug-section-title">当前节点 / 调用栈</div>
+                    <div class="debug-box" id="debugStackBox">（未开始）</div>
+                </div>
+                <div class="debug-section">
+                    <div class="debug-section-title">变量</div>
+                    <div class="debug-box" id="debugVarsBox">（未开始）</div>
+                </div>
+            </div>
         </div>
     </div>
 </div>
