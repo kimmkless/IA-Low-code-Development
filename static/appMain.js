@@ -1,12 +1,173 @@
-import { state, setActiveConsoleTab, setDebugCurrentNodeId } from './appStore.js';
+import { state, setActiveCanvasTool, setActiveConsoleTab, setDebugCurrentNodeId } from './appStore.js';
 import { addConsoleLog, clearConsole, displayLogs, showModal } from './appUtils.js';
-import { createNode, renderCanvas, setSelectedNode, deleteNodeById } from './nodeManager.js';
+import { autoArrangeNodes, copySelectedNodes, createNode, cutSelectedNodes, deleteSelectedNodes, pasteClipboardNodes, placeNodeWithoutOverlapById, renderCanvas, setSelectedNode } from './nodeManager.js';
 import { initFileMenu } from './menuFile.js';
 import { initProjectMenu } from './menuProject.js';
 import { initSettingsMenu } from './menuSettings.js';
 import { initWindowMenu } from './menuWindow.js';
 
 let debugSessionId = null;
+const ALLOWED_NODE_TYPES = new Set(['start', 'print', 'sequence', 'loop', 'branch']);
+
+function ensureCanvasToolbarExtras() {
+    const toolbar = document.getElementById('canvasToolbar');
+    const canvasPanel = document.querySelector('.canvas-panel');
+    if (!toolbar || !canvasPanel) return;
+
+    const ensureButton = (id, text) => {
+        let button = document.getElementById(id);
+        if (button) return button;
+        button = document.createElement('button');
+        button.id = id;
+        button.className = 'toolbar-btn toolbar-action-btn';
+        button.textContent = text;
+        toolbar.appendChild(button);
+        return button;
+    };
+
+    const copyBtn = ensureButton('copyCanvasBtn', '复制');
+    const cutBtn = ensureButton('cutCanvasBtn', '剪切');
+    const pasteBtn = ensureButton('pasteCanvasBtn', '粘贴');
+    const arrangeBtn = document.getElementById('arrangeCanvasBtn');
+    const hint = document.getElementById('canvasToolHint');
+
+    if (arrangeBtn) toolbar.appendChild(arrangeBtn);
+    if (hint) toolbar.appendChild(hint);
+    if (!document.getElementById('canvasContextMenu')) {
+        const menu = document.createElement('div');
+        menu.id = 'canvasContextMenu';
+        menu.className = 'canvas-context-menu';
+        menu.innerHTML = `
+            <button class="context-menu-btn" data-menu-action="copy">复制</button>
+            <button class="context-menu-btn" data-menu-action="cut">剪切</button>
+            <button class="context-menu-btn" data-menu-action="paste">粘贴</button>
+        `;
+        canvasPanel.appendChild(menu);
+    }
+
+    [copyBtn, cutBtn, pasteBtn].forEach(button => {
+        button.classList.add('toolbar-action-btn');
+        button.setAttribute('draggable', 'false');
+    });
+}
+
+function updateCanvasToolbarUi() {
+    const hint = document.getElementById('canvasToolHint');
+    const toolMeta = {
+        select: {
+            label: '选择',
+            tip: '选择模式：左键拖动节点，按住 Alt 再按左键可拖动画布。'
+        },
+        connect: {
+            label: '连线',
+            tip: '连线模式：从节点端口拖到目标节点以建立连接。'
+        },
+        delete: {
+            label: '删除',
+            tip: '删除模式：点击可删单个节点，按住左键拖动可擦除路径上的节点。'
+        },
+        arrange: {
+            label: '整理',
+            tip: '整理画布：按程序执行逻辑，从左到右自动排布节点。'
+        },
+        copy: {
+            label: '复制',
+            tip: '复制当前选中的节点；会保留节点属性和容器关系，但不保留连接关系。'
+        },
+        cut: {
+            label: '剪切',
+            tip: '剪切当前选中的节点；会复制节点结构后从画布移除。'
+        },
+        paste: {
+            label: '粘贴',
+            tip: '将剪贴板中的节点粘贴到当前视口或右键菜单位置。'
+        }
+    };
+    const toolText = {
+        select: '选择模式：按住 Alt 再按左键可拖动画布。',
+        connect: '连线模式：从节点端口拖到目标节点以建立连接。',
+        delete: '删除模式：点击可删单个节点，按住左键拖动可擦除路径上的节点。'
+    };
+
+    const applyMeta = (id, metaKey) => {
+        const button = document.getElementById(id);
+        const meta = toolMeta[metaKey];
+        if (!button || !meta) return;
+        button.textContent = meta.label;
+        button.setAttribute('title', meta.tip);
+        button.setAttribute('data-tooltip', meta.tip);
+    };
+
+    applyMeta('selectToolBtn', 'select');
+    applyMeta('connectToolBtn', 'connect');
+    applyMeta('deleteToolBtn', 'delete');
+    applyMeta('arrangeCanvasBtn', 'arrange');
+    applyMeta('copyCanvasBtn', 'copy');
+    applyMeta('cutCanvasBtn', 'cut');
+    applyMeta('pasteCanvasBtn', 'paste');
+
+    document.querySelectorAll('[data-tool]').forEach(button => {
+        const tool = button.getAttribute('data-tool');
+        const isActive = tool === state.activeCanvasTool;
+        button.classList.toggle('active', isActive);
+        button.classList.toggle('danger-active', isActive && tool === 'delete');
+    });
+
+    if (hint) hint.textContent = toolText[state.activeCanvasTool] || toolText.select;
+}
+
+function setCanvasTool(tool) {
+    setActiveCanvasTool(tool);
+    updateCanvasToolbarUi();
+    renderCanvas();
+}
+
+function bindCanvasToolbar() {
+    ensureCanvasToolbarExtras();
+
+    const toolbar = document.getElementById('canvasToolbar');
+    if (toolbar) {
+        toolbar.setAttribute('draggable', 'false');
+        toolbar.addEventListener('dragstart', (e) => {
+            e.preventDefault();
+        });
+        toolbar.querySelectorAll('button').forEach(button => {
+            button.setAttribute('draggable', 'false');
+            button.addEventListener('dragstart', (e) => {
+                e.preventDefault();
+            });
+        });
+    }
+
+    document.querySelectorAll('[data-tool]').forEach(button => {
+        button.onclick = () => {
+            const tool = button.getAttribute('data-tool');
+            if (!tool) return;
+            if (state.activeCanvasTool === tool && tool !== 'select') {
+                setCanvasTool('select');
+                return;
+            }
+            setCanvasTool(tool);
+        };
+    });
+
+    const arrangeBtn = document.getElementById('arrangeCanvasBtn');
+    if (arrangeBtn) {
+        arrangeBtn.onclick = () => {
+            autoArrangeNodes();
+            updateCanvasToolbarUi();
+            addConsoleLog('已按执行逻辑从左到右整理节点。', 'info', 'run');
+        };
+    }
+
+    const copyBtn = document.getElementById('copyCanvasBtn');
+    const cutBtn = document.getElementById('cutCanvasBtn');
+    const pasteBtn = document.getElementById('pasteCanvasBtn');
+
+    if (copyBtn) copyBtn.onclick = () => copySelectedNodes();
+    if (cutBtn) cutBtn.onclick = () => cutSelectedNodes();
+    if (pasteBtn) pasteBtn.onclick = () => pasteClipboardNodes();
+}
 
 function prepareDebugToolbar() {
     const topRight = document.querySelector('.top-right');
@@ -98,11 +259,11 @@ function initDragDrop() {
         e.stopPropagation();
 
         const type = e.dataTransfer.getData('text/plain');
-        if (!type) return;
+        if (!type || !ALLOWED_NODE_TYPES.has(type)) return;
 
         const rect = canvasArea.getBoundingClientRect();
-        let x = e.clientX - rect.left - 90;
-        let y = e.clientY - rect.top - 40;
+        let x = e.clientX - rect.left + canvasArea.scrollLeft - 90;
+        let y = e.clientY - rect.top + canvasArea.scrollTop - 40;
         x = Math.max(20, Math.min(x, rect.width - 200));
         y = Math.max(20, Math.min(y, rect.height - 100));
 
@@ -113,6 +274,7 @@ function initDragDrop() {
         }
 
         state.nodes.set(newNode.id, newNode);
+        placeNodeWithoutOverlapById(newNode.id, { x, y });
         renderCanvas();
         setSelectedNode(newNode.id);
         addConsoleLog(`已添加 ${type} 节点，ID:${newNode.id}`, 'info');
@@ -375,8 +537,7 @@ function bindGlobalButtons() {
 
     if (deleteSelectedBtn) {
         deleteSelectedBtn.onclick = () => {
-            if (!state.selectedNodeId) return;
-            deleteNodeById(state.selectedNodeId);
+            deleteSelectedNodes();
         };
     }
 
@@ -400,9 +561,46 @@ function bindGlobalButtons() {
     }
 }
 
+function isFormEditingTarget(target) {
+    if (!target) return false;
+    const tag = target.tagName;
+    return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || target.isContentEditable;
+}
+
+function bindCanvasShortcuts() {
+    document.addEventListener('keydown', (e) => {
+        if (isFormEditingTarget(e.target)) return;
+
+        if ((e.ctrlKey || e.metaKey) && !e.shiftKey) {
+            const key = e.key.toLowerCase();
+            if (key === 'c') {
+                e.preventDefault();
+                copySelectedNodes();
+                return;
+            }
+            if (key === 'x') {
+                e.preventDefault();
+                cutSelectedNodes();
+                return;
+            }
+            if (key === 'v') {
+                e.preventDefault();
+                pasteClipboardNodes();
+                return;
+            }
+        }
+
+        if ((e.key === 'Delete' || e.key === 'Backspace') && (state.selectedNodeIds?.length || state.selectedNodeId)) {
+            e.preventDefault();
+            deleteSelectedNodes();
+        }
+    });
+}
+
 export function init() {
     prepareDebugToolbar();
     prepareConsolePanel();
+    ensureCanvasToolbarExtras();
     initDragDrop();
     initDemoFlow();
     initFileMenu();
@@ -411,7 +609,10 @@ export function init() {
     initWindowMenu();
     bindConsoleTabs();
     bindGlobalButtons();
+    bindCanvasToolbar();
+    bindCanvasShortcuts();
     setConsoleTab(state.activeConsoleTab);
+    updateCanvasToolbarUi();
     renderDebugState(null);
 }
 
