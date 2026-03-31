@@ -8,6 +8,107 @@ import { initWindowMenu } from './menuWindow.js';
 
 let debugSessionId = null;
 const ALLOWED_NODE_TYPES = new Set(['start', 'print', 'sequence', 'loop', 'branch']);
+const COMPONENT_LIBRARY = [
+    {
+        id: 'collection',
+        title: '信息收集',
+        description: '收集流程入口与基础采集节点',
+        icon: '🧭',
+        expanded: true,
+        items: [
+            { type: 'start', icon: '🟢', title: '开始节点', desc: '工作流入口' }
+        ]
+    },
+    {
+        id: 'processing',
+        title: '信息处理',
+        description: '处理逻辑判断与流程输出',
+        icon: '🧠',
+        expanded: true,
+        items: [
+            { type: 'print', icon: '🖨️', title: '打印节点', desc: '输出调试信息' },
+            { type: 'loop', icon: '🔄', title: '循环节点', desc: '重复执行指定次数' },
+            { type: 'branch', icon: '🌿', title: '分支节点', desc: '根据条件选择路径' }
+        ]
+    },
+    {
+        id: 'variable',
+        title: '变量处理',
+        description: '处理变量流转与顺序执行',
+        icon: '🧮',
+        expanded: true,
+        items: [
+            { type: 'sequence', icon: '🔁', title: '顺序节点', desc: '占位/传递执行流' }
+        ]
+    }
+];
+const expandedComponentGroups = new Set(
+    COMPONENT_LIBRARY
+        .filter(group => group.expanded !== false)
+        .map(group => group.id)
+);
+
+function getComponentLibraryItem(type) {
+    for (const group of COMPONENT_LIBRARY) {
+        const item = group.items.find(component => component.type === type);
+        if (item) return item;
+    }
+    return null;
+}
+
+function renderComponentLibrary() {
+    const list = document.getElementById('componentsLibrary');
+    if (!list) return;
+
+    list.innerHTML = COMPONENT_LIBRARY.map(group => {
+        const expanded = expandedComponentGroups.has(group.id);
+        const itemsHtml = group.items.map(item => `
+            <div class="comp-item" draggable="true" data-type="${item.type}" data-group="${group.id}" title="拖拽 ${item.title} 到画布">
+                ${item.icon} ${item.title}
+                <div class="comp-desc">${item.desc}</div>
+            </div>
+        `).join('');
+
+        return `
+            <section class="comp-group ${expanded ? 'expanded' : ''}" data-group-id="${group.id}">
+                <button class="comp-group-header" type="button" data-group-toggle="${group.id}" aria-expanded="${expanded ? 'true' : 'false'}">
+                    <span class="comp-group-title-wrap">
+                        <span class="comp-group-icon">${group.icon}</span>
+                        <span class="comp-group-title-text">
+                            <span class="comp-group-title">${group.title}</span>
+                            <span class="comp-group-subtitle">${group.description}</span>
+                        </span>
+                    </span>
+                    <span class="comp-group-arrow">${expanded ? '▾' : '▸'}</span>
+                </button>
+                <div class="comp-group-body">${itemsHtml}</div>
+            </section>
+        `;
+    }).join('');
+}
+
+function initComponentLibrary() {
+    const panel = document.querySelector('.components-panel');
+    if (!panel) return;
+
+    renderComponentLibrary();
+
+    panel.addEventListener('click', (e) => {
+        const toggleBtn = e.target.closest('[data-group-toggle]');
+        if (!toggleBtn) return;
+
+        const groupId = toggleBtn.getAttribute('data-group-toggle');
+        if (!groupId) return;
+
+        if (expandedComponentGroups.has(groupId)) {
+            expandedComponentGroups.delete(groupId);
+        } else {
+            expandedComponentGroups.add(groupId);
+        }
+
+        renderComponentLibrary();
+    });
+}
 
 function ensureCanvasToolbarExtras() {
     const toolbar = document.getElementById('canvasToolbar');
@@ -248,21 +349,21 @@ function prepareConsolePanel() {
 }
 
 function initDragDrop() {
-    const comps = document.querySelectorAll('.comp-item');
+    const componentsPanel = document.querySelector('.components-panel');
     const canvasArea = document.getElementById('canvasArea');
 
-    if (!canvasArea) {
+    if (!canvasArea || !componentsPanel) {
         addConsoleLog('画布区域未找到，拖拽功能可能失效', 'error');
         return;
     }
 
-    comps.forEach(comp => {
-        comp.addEventListener('dragstart', (e) => {
-            const type = comp.getAttribute('data-type');
-            if (!type) return;
-            e.dataTransfer.setData('text/plain', type);
-            e.dataTransfer.effectAllowed = 'copy';
-        });
+    componentsPanel.addEventListener('dragstart', (e) => {
+        const comp = e.target.closest('.comp-item');
+        if (!comp) return;
+        const type = comp.getAttribute('data-type');
+        if (!type) return;
+        e.dataTransfer.setData('text/plain', type);
+        e.dataTransfer.effectAllowed = 'copy';
     });
 
     canvasArea.addEventListener('dragover', (e) => {
@@ -295,7 +396,8 @@ function initDragDrop() {
         commitCanvasHistorySnapshot(beforeSnapshot);
         renderCanvas();
         setSelectedNode(newNode.id);
-        addConsoleLog(`已添加 ${type} 节点，ID:${newNode.id}`, 'info');
+        const componentItem = getComponentLibraryItem(type);
+        addConsoleLog(`已添加 ${componentItem?.title || type}，ID:${newNode.id}`, 'info');
     });
 }
 
@@ -628,6 +730,7 @@ export function init() {
     prepareDebugToolbar();
     prepareConsolePanel();
     ensureCanvasToolbarExtras();
+    initComponentLibrary();
     initDragDrop();
     initDemoFlow();
     initFileMenu();

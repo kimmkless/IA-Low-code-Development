@@ -71,29 +71,9 @@
     <div class="main-layout">
         <!-- 左侧组件库 -->
         <div class="components-panel">
-            <div class="panel-header">📦 组件库 (拖拽到画布)</div>
-            <div class="components-list">
-                <div class="comp-item" draggable="true" data-type="start">
-                    🟢 开始节点
-                    <div class="comp-desc">工作流入口</div>
-                </div>
-                <div class="comp-item" draggable="true" data-type="print">
-                    🖨️ 打印节点
-                    <div class="comp-desc">输出调试信息</div>
-                </div>
-                <div class="comp-item" draggable="true" data-type="sequence">
-                    🔁 顺序节点
-                    <div class="comp-desc">占位/传递执行流</div>
-                </div>
-                <div class="comp-item" draggable="true" data-type="loop">
-                    🔄 循环节点
-                    <div class="comp-desc">重复执行指定次数</div>
-                </div>
-                <div class="comp-item" draggable="true" data-type="branch">
-                    🌿 分支节点 (if/else)
-                    <div class="comp-desc">根据条件选择路径</div>
-                </div>
-            </div>
+            <div class="panel-header">📦 组件库</div>
+            <div class="components-hint">先点击大节点，再展开并拖拽对应组件到画布</div>
+            <div class="components-list" id="componentsLibrary"></div>
         </div>
 
         <!-- 中间画布区 -->
