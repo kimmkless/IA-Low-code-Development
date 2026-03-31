@@ -2,6 +2,7 @@ import os
 import uuid
 import time
 from flask import Flask, render_template, request, jsonify
+from debug_runtime import create_session, serialize_state, step_once
 
 current_dir = os.path.dirname(os.path.abspath(__file__))
 template_dir = os.path.join(current_dir, '..', 'templates')
@@ -148,19 +149,14 @@ def debug_start():
     nodes_data = data.get('nodes', [])
     if not nodes_data:
         return jsonify({"error": "no nodes"}), 400
-    start = _find_start(nodes_data)
-    if not start:
-        return jsonify({"error": "no start node"}), 400
     sid = str(uuid.uuid4())
-    debug_sessions[sid] = {
-        "created_at": time.time(),
-        "nodes_map": {n['id']: n for n in nodes_data},
-        "current_id": start['id'],
-        "vars": {},
-        "callstack": [],
-        "loop_frame": None,
-    }
-    return jsonify({"session_id": sid, "state": _session_state_text(debug_sessions[sid])})
+    try:
+        session = create_session(nodes_data)
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    session["created_at"] = time.time()
+    debug_sessions[sid] = session
+    return jsonify({"session_id": sid, "state": serialize_state(session)})
 
 @app.route('/api/debug/step', methods=['POST'])
 def debug_step():
@@ -169,8 +165,8 @@ def debug_step():
     sess = debug_sessions.get(sid)
     if not sess:
         return jsonify({"error": "invalid session"}), 400
-    logs, finished = _step_once(sess)
-    return jsonify({"logs": logs, "finished": finished, "state": _session_state_text(sess)})
+    logs, finished = step_once(sess)
+    return jsonify({"logs": logs, "finished": finished, "state": serialize_state(sess)})
 
 @app.route('/api/debug/continue', methods=['POST'])
 def debug_continue():
@@ -192,11 +188,11 @@ def debug_continue():
             logs_all.append(f"⛔ 命中断点: {cur}")
             break
         first = False
-        logs, finished = _step_once(sess)
+        logs, finished = step_once(sess)
         logs_all.extend(logs)
         if finished:
             break
-    return jsonify({"logs": logs_all, "finished": sess.get('current_id') is None, "state": _session_state_text(sess)})
+    return jsonify({"logs": logs_all, "finished": sess.get('current_id') is None, "state": serialize_state(sess)})
 
 @app.route('/api/debug/stop', methods=['POST'])
 def debug_stop():

@@ -1,5 +1,5 @@
-import { state } from './store.js';
-import { addConsoleLog, showModal } from './utils.js';
+import { state } from './appStore.js';
+import { addConsoleLog, showModal } from './appUtils.js';
 import { renderCanvas, setSelectedNode } from './nodeManager.js';
 
 // API调用

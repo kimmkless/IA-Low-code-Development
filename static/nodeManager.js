@@ -1,5 +1,5 @@
-import { state, setSelectedNodeId } from './store.js';
-import { addConsoleLog, escapeHtml } from './utils.js';
+import { state, setSelectedNodeId } from './appStore.js';
+import { addConsoleLog, escapeHtml } from './appUtils.js';
 
 function typeLabel(type) {
     switch(type) {
@@ -524,6 +524,7 @@ export function renderCanvas() {
         const nodeDiv = document.createElement("div");
         nodeDiv.className = "flow-node";
         if (state.selectedNodeId === node.id) nodeDiv.classList.add("selected");
+        if (state.debugCurrentNodeId === node.id) nodeDiv.classList.add("debug-current");
         nodeDiv.style.position = "absolute";
         nodeDiv.setAttribute("data-id", node.id);
 

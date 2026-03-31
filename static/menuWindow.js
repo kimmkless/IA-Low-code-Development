@@ -1,4 +1,4 @@
-import { addConsoleLog, showModal } from './utils.js';
+import { addConsoleLog, showModal } from './appUtils.js';
 
 function resetView() {
     // 重置视图功能（可扩展）

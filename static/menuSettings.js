@@ -1,5 +1,5 @@
-import { state, setConsoleMode } from './store.js';
-import { addConsoleLog, showModal } from './utils.js';
+import { state, setConsoleMode } from './appStore.js';
+import { addConsoleLog, showModal } from './appUtils.js';
 
 function showConsoleSetting() {
     showModal({

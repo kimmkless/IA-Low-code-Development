@@ -1,5 +1,5 @@
-import { state } from './store.js';
-import { addConsoleLog } from './utils.js';
+import { state } from './appStore.js';
+import { addConsoleLog } from './appUtils.js';
 import { renderCanvas, setSelectedNode } from './nodeManager.js';
 
 function exportProjectJSON() {
