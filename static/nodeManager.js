@@ -1,4 +1,4 @@
-import { state, setExpandedPropertyNodeIds, setSelectedNodeIds } from './appStore.js';
+import { state, setExpandedPropertyNodeIds, setNextId, setNodes, setSelectedNodeIds } from './appStore.js';
 import { addConsoleLog, escapeHtml } from './appUtils.js';
 
 const NODE_W = 180;
@@ -11,6 +11,7 @@ const CHILD_STACK_GAP = 18;
 const CANVAS_PADDING = 48;
 const DELETE_SWEEP_RADIUS = 26;
 const PASTE_OFFSET_STEP = 28;
+const MAX_UNDO_HISTORY = 80;
 
 function typeLabel(type) {
     switch(type) {
@@ -523,6 +524,7 @@ function collectRootChains() {
 }
 
 export function autoArrangeNodes() {
+    const beforeSnapshot = snapshotCanvasState();
     const roots = Array.from(state.nodes.values()).filter(node => node.parentId == null);
     roots.forEach(autoArrangeContainerTree);
 
@@ -544,6 +546,7 @@ export function autoArrangeNodes() {
         cursorY += rowHeight + ROOT_GAP_Y;
     }
 
+    pushUndoSnapshot(beforeSnapshot);
     renderCanvas();
 }
 
@@ -656,6 +659,99 @@ function getSelectedNodes() {
         .filter(Boolean);
 }
 
+function snapshotCanvasState() {
+    return {
+        nodes: cloneData(Array.from(state.nodes.values())),
+        nextId: state.nextId,
+        selectedNodeId: getPrimarySelectedNodeId(),
+        selectedNodeIds: cloneData(getSelectedNodeIds()),
+        expandedPropertyNodeIds: cloneData(state.expandedPropertyNodeIds || [])
+    };
+}
+
+function serializeCanvasSnapshot(snapshot) {
+    return JSON.stringify(snapshot);
+}
+
+function restoreCanvasSnapshot(snapshot) {
+    if (!snapshot) return;
+
+    const nodes = new Map();
+    for (let node of cloneData(snapshot.nodes || [])) {
+        nodes.set(node.id, node);
+    }
+
+    setNodes(nodes);
+    setNextId(snapshot.nextId ?? 100);
+    setSelectedNodeIds(snapshot.selectedNodeIds || [], snapshot.selectedNodeId ?? null);
+    setExpandedPropertyNodeIds(snapshot.expandedPropertyNodeIds || []);
+}
+
+const undoHistory = [];
+let isRestoringHistory = false;
+
+function syncUndoUiState() {
+    const undoBtn = document.getElementById('undoCanvasBtn');
+    if (undoBtn) undoBtn.disabled = undoHistory.length === 0;
+
+    const menu = document.getElementById('canvasContextMenu');
+    if (menu) {
+        const undoMenuBtn = menu.querySelector('[data-menu-action="undo"]');
+        if (undoMenuBtn) undoMenuBtn.disabled = undoHistory.length === 0;
+    }
+}
+
+function pushUndoSnapshot(beforeSnapshot, afterSnapshot = snapshotCanvasState()) {
+    if (isRestoringHistory || !beforeSnapshot) return false;
+
+    const beforeSerialized = serializeCanvasSnapshot(beforeSnapshot);
+    const afterSerialized = serializeCanvasSnapshot(afterSnapshot);
+    if (beforeSerialized === afterSerialized) return false;
+    if (undoHistory.length && undoHistory[undoHistory.length - 1].serialized === beforeSerialized) {
+        syncUndoUiState();
+        return false;
+    }
+
+    undoHistory.push({ serialized: beforeSerialized, snapshot: beforeSnapshot });
+    if (undoHistory.length > MAX_UNDO_HISTORY) undoHistory.shift();
+    syncUndoUiState();
+    return true;
+}
+
+export function canUndoCanvasChange() {
+    return undoHistory.length > 0;
+}
+
+export function captureCanvasHistorySnapshot() {
+    return snapshotCanvasState();
+}
+
+export function commitCanvasHistorySnapshot(beforeSnapshot) {
+    return pushUndoSnapshot(beforeSnapshot);
+}
+
+export function resetCanvasHistory() {
+    undoHistory.length = 0;
+    syncUndoUiState();
+}
+
+export function undoCanvasChange() {
+    if (!undoHistory.length) return false;
+    const entry = undoHistory.pop();
+    isRestoringHistory = true;
+    try {
+        restoreCanvasSnapshot(entry.snapshot);
+        hideCanvasContextMenu();
+        renderCanvas();
+        renderPropertiesPanel();
+        addConsoleLog('已撤回上一步画布修改。', 'info');
+    } finally {
+        isRestoringHistory = false;
+        syncUndoUiState();
+    }
+    return true;
+}
+
 function collectDescendantIds(rootId, bucket = new Set()) {
     if (!state.nodes.has(rootId) || bucket.has(rootId)) return bucket;
     bucket.add(rootId);
@@ -669,6 +765,7 @@ function deleteNodesByIds(ids, options = {}) {
     const idsToDelete = new Set();
     (Array.isArray(ids) ? ids : []).forEach(id => collectDescendantIds(id, idsToDelete));
     if (!idsToDelete.size) return;
+    const beforeSnapshot = options.skipHistory ? null : snapshotCanvasState();
 
     for (let node of state.nodes.values()) {
         if (idsToDelete.has(node.id)) continue;
@@ -694,6 +791,7 @@ function deleteNodesByIds(ids, options = {}) {
 
     const remainingSelected = getSelectedNodeIds().filter(id => !idsToDelete.has(id));
     updateSelection(remainingSelected, remainingSelected[remainingSelected.length - 1] ?? null, (state.expandedPropertyNodeIds || []).filter(id => !idsToDelete.has(id)));
+    if (!options.skipHistory) pushUndoSnapshot(beforeSnapshot);
     renderCanvas();
     renderPropertiesPanel();
 
@@ -979,6 +1077,7 @@ function renderPropertiesPanel() {
             const field = el.getAttribute("data-field");
             const node = state.nodes.get(nodeId);
             if (!node || !field) return;
+            const beforeSnapshot = snapshotCanvasState();
 
             let val = el.value;
             if (field === "loopCount") val = parseInt(val, 10) || 1;
@@ -997,6 +1096,7 @@ function renderPropertiesPanel() {
             }
 
             node.properties[field] = val;
+            pushUndoSnapshot(beforeSnapshot);
             renderCanvas();
             renderPropertiesPanel();
             addConsoleLog(`更新节点 ${node.id} 属性: ${field}=${val}`, "info");
@@ -1008,6 +1108,7 @@ function renderPropertiesPanel() {
             const nodeId = Number(btn.getAttribute("data-node-id"));
             const node = state.nodes.get(nodeId);
             if (!node) return;
+            const beforeSnapshot = snapshotCanvasState();
 
             const action = btn.getAttribute("data-action");
             const idx = parseInt(btn.getAttribute("data-idx"), 10);
@@ -1044,6 +1145,7 @@ function renderPropertiesPanel() {
             if (action.startsWith('branchFalseBody')) node.properties.falseBodyNodeIds = arr;
 
             layoutContainerChildren(node);
+            pushUndoSnapshot(beforeSnapshot);
             renderCanvas();
             renderPropertiesPanel();
         });
@@ -1276,7 +1378,9 @@ export function renderCanvas() {
             e.stopPropagation();
             if (ignoreNextClick) { ignoreNextClick = false; return; }
             if (e.target?.getAttribute && e.target.getAttribute('data-action') === 'toggleBreakpoint') {
+                const beforeSnapshot = snapshotCanvasState();
                 node.properties.breakpoint = !node.properties.breakpoint;
+                pushUndoSnapshot(beforeSnapshot);
                 renderCanvas();
                 if (isNodeSelected(node.id)) renderPropertiesPanel();
                 return;
@@ -1303,6 +1407,7 @@ export function renderCanvas() {
             isDraggingNode = true;
             currentNodeMoving = node.id;
             dragStartNodePosition = { ...getNodePosition(node) };
+            dragStartCanvasSnapshot = snapshotCanvasState();
             didMoveNode = false;
             ignoreNextClick = false;
             const rect = nodeDiv.getBoundingClientRect();
@@ -1378,6 +1483,7 @@ export function renderCanvas() {
 
     drawConnections();
     scheduleConnectionRefresh();
+    syncUndoUiState();
 }
 
 // 拖拽相关变量
@@ -1401,7 +1507,12 @@ let panStartScrollTop = 0;
 let isDeleteSweeping = false;
 let deleteSweepMarker = null;
 let lastDeletePoint = null;
+let deleteSweepStartSnapshot = null;
+let didDeleteSweepNodes = false;
 let dragStartNodePosition = null;
+let dragStartCanvasSnapshot = null;
+let portDragStartSnapshot = null;
+let didMovePort = false;
 const pendingPositionAnimations = new Map();
 let connectionRefreshRaf = null;
 let clipboardPayload = null;
@@ -1545,7 +1656,9 @@ function updateCanvasContextMenuState() {
 
     menu.querySelectorAll('[data-menu-action]').forEach(button => {
         const action = button.getAttribute('data-menu-action');
-        const disabled = (action === 'copy' || action === 'cut') ? !hasSelection : !hasClipboard;
+        const disabled = action === 'undo'
+            ? !canUndoCanvasChange()
+            : ((action === 'copy' || action === 'cut') ? !hasSelection : !hasClipboard);
         button.disabled = disabled;
     });
 }
@@ -1579,6 +1692,7 @@ function bindCanvasContextMenuActions() {
     menu.querySelectorAll('[data-menu-action]').forEach(button => {
         button.addEventListener('click', () => {
             const action = button.getAttribute('data-menu-action');
+            if (action === 'undo') undoCanvasChange();
             if (action === 'copy') copySelectedNodes(contextMenuTargetNodeId);
             if (action === 'cut') cutSelectedNodes(contextMenuTargetNodeId);
             if (action === 'paste') pasteClipboardNodes();
@@ -1621,6 +1735,7 @@ export function pasteClipboardNodes() {
         addConsoleLog('剪贴板中没有可粘贴的节点。', 'error');
         return false;
     }
+    const beforeSnapshot = snapshotCanvasState();
 
     const pasteBase = contextMenuCanvasPoint || getDefaultPastePoint();
     const offset = clipboardPasteCount * PASTE_OFFSET_STEP;
@@ -1689,6 +1804,7 @@ export function pasteClipboardNodes() {
 
     const pastedIds = Array.from(idMap.values());
     updateSelection(pastedIds, pastedIds[pastedIds.length - 1] ?? null, pastedIds);
+    pushUndoSnapshot(beforeSnapshot);
     renderCanvas();
     renderPropertiesPanel();
     addConsoleLog(`已粘贴 ${pastedIds.length} 个节点（未保留连接关系）。`, 'info');
@@ -1715,6 +1831,8 @@ function updateDeleteSweepMarker(clientX, clientY) {
 function finishDeleteSweep() {
     isDeleteSweeping = false;
     lastDeletePoint = null;
+    deleteSweepStartSnapshot = null;
+    didDeleteSweepNodes = false;
     if (deleteSweepMarker) {
         deleteSweepMarker.remove();
         deleteSweepMarker = null;
@@ -1758,13 +1876,16 @@ function sweepDeleteAtPoint(clientX, clientY) {
     updateDeleteSweepMarker(clientX, clientY);
 
     if (!idsToDelete.size) return;
-    idsToDelete.forEach(nodeId => deleteNodeById(nodeId));
+    didDeleteSweepNodes = true;
+    deleteNodesByIds(Array.from(idsToDelete), { skipHistory: true });
 }
 
 function beginDeleteSweep(e) {
     if (state.activeCanvasTool !== 'delete' || e.button !== 0) return;
     isDeleteSweeping = true;
     lastDeletePoint = null;
+    deleteSweepStartSnapshot = snapshotCanvasState();
+    didDeleteSweepNodes = false;
     sweepDeleteAtPoint(e.clientX, e.clientY);
     e.preventDefault();
 }
@@ -1850,6 +1971,8 @@ function onConnectPointMouseDown(e) {
             isDraggingPort = true;
             draggingPortNodeId = nodeId;
             draggingPortField = field;
+            portDragStartSnapshot = snapshotCanvasState();
+            didMovePort = false;
             return;
         }
         isDraggingConnection = true;
@@ -1911,6 +2034,7 @@ function onGlobalMouseMove(e) {
         if (!node) return;
         if (!node.properties.portPositions) node.properties.portPositions = {};
         node.properties.portPositions[draggingPortField] = { x: px, y: py };
+        didMovePort = true;
         renderCanvas();
     } else if (isDraggingConnection && draggingFromNodeId !== null) {
         const containerRect = canvasDiv.getBoundingClientRect();
@@ -1959,6 +2083,7 @@ function onGlobalMouseUp(e) {
         if (canvasArea) canvasArea.classList.remove('panning');
     }
     if (isDeleteSweeping) {
+        if (didDeleteSweepNodes) pushUndoSnapshot(deleteSweepStartSnapshot);
         finishDeleteSweep();
         renderCanvas();
         return;
@@ -1967,6 +2092,9 @@ function onGlobalMouseUp(e) {
         isDraggingPort = false;
         draggingPortNodeId = null;
         draggingPortField = null;
+        if (didMovePort) pushUndoSnapshot(portDragStartSnapshot);
+        portDragStartSnapshot = null;
+        didMovePort = false;
         return;
     }
     if (isDraggingNode) {
@@ -1991,11 +2119,13 @@ function onGlobalMouseUp(e) {
                 syncContainerOrderFromPositions(parentNode);
                 layoutContainerChildren(parentNode);
             }
+            pushUndoSnapshot(dragStartCanvasSnapshot);
             renderCanvas();
             renderPropertiesPanel();
         }
         didMoveNode = false;
         dragStartNodePosition = null;
+        dragStartCanvasSnapshot = null;
     }
     if (isDraggingConnection && draggingFromNodeId !== null) {
         const hitEls = document.elementsFromPoint(e.clientX, e.clientY);
@@ -2022,6 +2152,7 @@ function createConnection(sourceId, targetId, fieldOverride = null) {
     const sourceNode = state.nodes.get(sourceId);
     const targetNode = state.nodes.get(targetId);
     if (!sourceNode || !targetNode) return;
+    const beforeSnapshot = snapshotCanvasState();
     if (sourceNode.parentId != null && sourceNode.parentId !== targetNode.parentId) {
         attachNodeIntoSourceContainer(targetNode, sourceNode);
     }
@@ -2035,6 +2166,7 @@ function createConnection(sourceId, targetId, fieldOverride = null) {
                 return;
             }
             addConsoleLog(`Added to loop body: ${sourceId} += ${targetId}`, "info");
+            pushUndoSnapshot(beforeSnapshot);
             renderCanvas();
             if (isNodeSelected(sourceId)) renderPropertiesPanel();
             return;
@@ -2046,12 +2178,14 @@ function createConnection(sourceId, targetId, fieldOverride = null) {
                 return;
             }
             addConsoleLog(`Added to branch body: ${sourceId} += ${targetId} (${fieldOverride})`, "info");
+            pushUndoSnapshot(beforeSnapshot);
             renderCanvas();
             if (isNodeSelected(sourceId)) renderPropertiesPanel();
             return;
         }
         sourceNode.properties[fieldOverride] = targetId;
         addConsoleLog(`连接: ${sourceId} → ${targetId} (${fieldOverride})`, "info");
+        pushUndoSnapshot(beforeSnapshot);
         renderCanvas();
         if (isNodeSelected(sourceId)) renderPropertiesPanel();
         return;
@@ -2078,6 +2212,7 @@ function createConnection(sourceId, targetId, fieldOverride = null) {
             addConsoleLog(`连接: ${sourceId} → ${targetId} (${choice})`, "info");
         }
     }
+    pushUndoSnapshot(beforeSnapshot);
     renderCanvas();
     if (isNodeSelected(sourceId)) renderPropertiesPanel();
 }

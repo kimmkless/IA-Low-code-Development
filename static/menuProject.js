@@ -1,6 +1,6 @@
 import { state } from './appStore.js';
 import { addConsoleLog } from './appUtils.js';
-import { renderCanvas, setSelectedNode } from './nodeManager.js';
+import { renderCanvas, resetCanvasHistory, setSelectedNode } from './nodeManager.js';
 
 function exportProjectJSON() {
     const data = { nodes: Array.from(state.nodes.values()), next_id: state.nextId };
@@ -23,6 +23,7 @@ function importProjectJSON(file) {
                 state.nodes.set(node.id, node);
             }
             state.nextId = data.next_id;
+            resetCanvasHistory();
             renderCanvas();
             setSelectedNode(null);
             addConsoleLog("导入项目成功", "info");

@@ -1,6 +1,6 @@
 import { state } from './appStore.js';
 import { addConsoleLog, showModal } from './appUtils.js';
-import { renderCanvas, setSelectedNode } from './nodeManager.js';
+import { renderCanvas, resetCanvasHistory, setSelectedNode } from './nodeManager.js';
 
 // API调用
 async function saveProjectToServer() {
@@ -34,6 +34,7 @@ async function loadProjectFromServer() {
                 state.nodes.set(node.id, node);
             }
             state.nextId = data.next_id;
+            resetCanvasHistory();
             renderCanvas();
             setSelectedNode(null);
             addConsoleLog("项目已从服务器加载", "info");
@@ -54,6 +55,7 @@ function newProject() {
         onOk: () => {
             state.nodes.clear();
             state.nextId = 100;
+            resetCanvasHistory();
             renderCanvas();
             setSelectedNode(null);
             addConsoleLog("已新建空白项目", "info");

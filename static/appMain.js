@@ -1,6 +1,6 @@
 import { state, setActiveCanvasTool, setActiveConsoleTab, setDebugCurrentNodeId } from './appStore.js';
 import { addConsoleLog, clearConsole, displayLogs, showModal } from './appUtils.js';
-import { autoArrangeNodes, copySelectedNodes, createNode, cutSelectedNodes, deleteSelectedNodes, pasteClipboardNodes, placeNodeWithoutOverlapById, renderCanvas, setSelectedNode } from './nodeManager.js';
+import { autoArrangeNodes, canUndoCanvasChange, captureCanvasHistorySnapshot, commitCanvasHistorySnapshot, copySelectedNodes, createNode, cutSelectedNodes, deleteSelectedNodes, pasteClipboardNodes, placeNodeWithoutOverlapById, renderCanvas, resetCanvasHistory, setSelectedNode, undoCanvasChange } from './nodeManager.js';
 import { initFileMenu } from './menuFile.js';
 import { initProjectMenu } from './menuProject.js';
 import { initSettingsMenu } from './menuSettings.js';
@@ -25,6 +25,7 @@ function ensureCanvasToolbarExtras() {
         return button;
     };
 
+    const undoBtn = ensureButton('undoCanvasBtn', '撤回');
     const copyBtn = ensureButton('copyCanvasBtn', '复制');
     const cutBtn = ensureButton('cutCanvasBtn', '剪切');
     const pasteBtn = ensureButton('pasteCanvasBtn', '粘贴');
@@ -38,6 +39,7 @@ function ensureCanvasToolbarExtras() {
         menu.id = 'canvasContextMenu';
         menu.className = 'canvas-context-menu';
         menu.innerHTML = `
+            <button class="context-menu-btn" data-menu-action="undo">撤回</button>
             <button class="context-menu-btn" data-menu-action="copy">复制</button>
             <button class="context-menu-btn" data-menu-action="cut">剪切</button>
             <button class="context-menu-btn" data-menu-action="paste">粘贴</button>
@@ -45,7 +47,7 @@ function ensureCanvasToolbarExtras() {
         canvasPanel.appendChild(menu);
     }
 
-    [copyBtn, cutBtn, pasteBtn].forEach(button => {
+    [undoBtn, copyBtn, cutBtn, pasteBtn].forEach(button => {
         button.classList.add('toolbar-action-btn');
         button.setAttribute('draggable', 'false');
     });
@@ -69,6 +71,10 @@ function updateCanvasToolbarUi() {
         arrange: {
             label: '整理',
             tip: '整理画布：按程序执行逻辑，从左到右自动排布节点。'
+        },
+        undo: {
+            label: '撤回',
+            tip: '撤回上一步画布修改，例如拖拽、连线、删除、粘贴或属性变更。'
         },
         copy: {
             label: '复制',
@@ -102,9 +108,13 @@ function updateCanvasToolbarUi() {
     applyMeta('connectToolBtn', 'connect');
     applyMeta('deleteToolBtn', 'delete');
     applyMeta('arrangeCanvasBtn', 'arrange');
+    applyMeta('undoCanvasBtn', 'undo');
     applyMeta('copyCanvasBtn', 'copy');
     applyMeta('cutCanvasBtn', 'cut');
     applyMeta('pasteCanvasBtn', 'paste');
+
+    const undoBtn = document.getElementById('undoCanvasBtn');
+    if (undoBtn) undoBtn.disabled = !canUndoCanvasChange();
 
     document.querySelectorAll('[data-tool]').forEach(button => {
         const tool = button.getAttribute('data-tool');
@@ -152,11 +162,17 @@ function bindCanvasToolbar() {
     });
 
     const arrangeBtn = document.getElementById('arrangeCanvasBtn');
+    const undoBtn = document.getElementById('undoCanvasBtn');
     if (arrangeBtn) {
         arrangeBtn.onclick = () => {
             autoArrangeNodes();
             updateCanvasToolbarUi();
             addConsoleLog('已按执行逻辑从左到右整理节点。', 'info', 'run');
+        };
+    }
+    if (undoBtn) {
+        undoBtn.onclick = () => {
+            if (undoCanvasChange()) updateCanvasToolbarUi();
         };
     }
 
@@ -266,6 +282,7 @@ function initDragDrop() {
         let y = e.clientY - rect.top + canvasArea.scrollTop - 40;
         x = Math.max(20, Math.min(x, rect.width - 200));
         y = Math.max(20, Math.min(y, rect.height - 100));
+        const beforeSnapshot = captureCanvasHistorySnapshot();
 
         const newNode = createNode(type, x, y);
         if (!newNode) {
@@ -275,6 +292,7 @@ function initDragDrop() {
 
         state.nodes.set(newNode.id, newNode);
         placeNodeWithoutOverlapById(newNode.id, { x, y });
+        commitCanvasHistorySnapshot(beforeSnapshot);
         renderCanvas();
         setSelectedNode(newNode.id);
         addConsoleLog(`已添加 ${type} 节点，ID:${newNode.id}`, 'info');
@@ -503,6 +521,7 @@ function initDemoFlow() {
         state.nodes.set(node.id, node);
     });
 
+    resetCanvasHistory();
     renderCanvas();
     addConsoleLog('已加载示例工作流，可直接运行或进入调试模式查看效果。', 'info', 'run');
 }
@@ -549,12 +568,15 @@ function bindGlobalButtons() {
                 okText: '确认清空',
                 cancelText: '取消',
                 onOk: () => {
+                    const beforeSnapshot = captureCanvasHistorySnapshot();
                     state.nodes.clear();
                     state.nextId = 100;
                     setDebugCurrentNodeId(null);
+                    commitCanvasHistorySnapshot(beforeSnapshot);
                     renderCanvas();
                     setSelectedNode(null);
                     renderDebugState(null);
+                    updateCanvasToolbarUi();
                 }
             });
         };
@@ -573,6 +595,11 @@ function bindCanvasShortcuts() {
 
         if ((e.ctrlKey || e.metaKey) && !e.shiftKey) {
             const key = e.key.toLowerCase();
+            if (key === 'z') {
+                e.preventDefault();
+                if (undoCanvasChange()) updateCanvasToolbarUi();
+                return;
+            }
             if (key === 'c') {
                 e.preventDefault();
                 copySelectedNodes();

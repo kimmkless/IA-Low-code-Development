@@ -257,6 +257,13 @@ body {
     box-shadow: 0 6px 16px rgba(44, 62, 80, 0.10);
 }
 
+.toolbar-btn:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+    transform: none;
+    box-shadow: none;
+}
+
 .toolbar-btn[data-tooltip]::before {
     content: "";
     position: absolute;
