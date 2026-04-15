@@ -5,8 +5,12 @@ import json
 from atexit import register
 from typing import Any
 
+try:
+    import cv2
+except ModuleNotFoundError:
+    cv2 = None
 
-from flask import Flask, jsonify, render_template, request
+from flask import Flask, Response, jsonify, render_template, request
 
 from debug_runtime import create_session, serialize_state, step_once
 from database import SensorDatabase
@@ -30,6 +34,7 @@ debug_sessions: dict[str, dict[str, Any]] = {}
 sensor_db = SensorDatabase()
 mqtt_db: SensorDatabase | None = None
 mqtt_handler = None
+camera_capture = None
 
 
 def start_app_mqtt() -> None:
@@ -48,6 +53,16 @@ def stop_app_mqtt() -> None:
 
 
 register(stop_app_mqtt)
+
+
+def stop_camera_capture() -> None:
+    global camera_capture
+    if camera_capture is not None:
+        camera_capture.release()
+        camera_capture = None
+
+
+register(stop_camera_capture)
 
 smart_agriculture_mock_data = {
     'sensor': {
@@ -70,7 +85,6 @@ def build_smart_agriculture_payload() -> dict[str, dict[str, Any]]:
     }
 
 
-
 def safe_int(value: Any, default: int = 0) -> int:
     try:
         return int(value)
@@ -79,6 +93,28 @@ def safe_int(value: Any, default: int = 0) -> int:
 
 
 
+
+
+def get_camera_capture(index: int = 0):
+    global camera_capture
+    if cv2 is None:
+        raise RuntimeError('未安装 opencv-python，请先执行 pip install opencv-python')
+    if camera_capture is None or not camera_capture.isOpened():
+        camera_capture = cv2.VideoCapture(index)
+    if camera_capture is None or not camera_capture.isOpened():
+        raise RuntimeError('无法打开本地摄像头，请检查摄像头是否被其他程序占用')
+    return camera_capture
+
+
+def capture_snapshot_bytes() -> bytes:
+    capture = get_camera_capture(safe_int(os.getenv('CAMERA_INDEX'), 0))
+    ok, frame = capture.read()
+    if not ok or frame is None:
+        raise RuntimeError('本地摄像头抓拍失败')
+    ok, encoded = cv2.imencode('.jpg', frame)
+    if not ok:
+        raise RuntimeError('摄像头图片编码失败')
+    return encoded.tobytes()
 
 
 def node_name(node: dict[str, Any]) -> str:
@@ -190,6 +226,24 @@ def get_agriculture_dashboard():
 @app.route('/api/agriculture/sensor', methods=['GET'])
 def get_agriculture_sensor():
     return jsonify({'status': 'ok', 'data': build_smart_agriculture_payload()['sensor']})
+
+
+@app.route('/api/agriculture/camera/snapshot', methods=['GET'])
+def get_agriculture_camera_snapshot():
+    try:
+        image_bytes = capture_snapshot_bytes()
+    except RuntimeError as error:
+        return jsonify({'status': 'error', 'message': str(error)}), 500
+
+    return Response(
+        image_bytes,
+        mimetype='image/jpeg',
+        headers={
+            'Cache-Control': 'no-store, no-cache, must-revalidate, max-age=0',
+            'Pragma': 'no-cache',
+            'Expires': '0',
+        },
+    )
 
 
 @app.route('/api/agriculture/mock/update', methods=['POST'])
@@ -474,4 +528,4 @@ def debug_stop():
 if __name__ == '__main__':
     if os.environ.get('WERKZEUG_RUN_MAIN') == 'true':
         start_app_mqtt()
-    app.run(debug=True)
+    app.run(host='0.0.0.0', port=5000, debug=True)
