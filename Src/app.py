@@ -269,6 +269,13 @@ def get_analysis_request_args() -> tuple[str, int, int]:
     return device_id, hours, limit
 
 
+def get_model_request_args() -> tuple[str, int, int, str]:
+    device_id, hours, _ = get_analysis_request_args()
+    min_points = max(12, min(safe_int(request.args.get('min_points'), 24), 240))
+    target = str(request.args.get('target') or 'all').strip() or 'all'
+    return device_id, hours, min_points, target
+
+
 def run_analysis_task(analysis_type: str, device_id: str, hours: int, limit: int) -> Any:
     return sensor_db.run_analysis_task(
         analysis_type=analysis_type,
@@ -377,6 +384,46 @@ def get_agriculture_report():
     report = sensor_db.get_agriculture_report_payload(device_id=device_id)
     report['runtime'] = get_runtime_status()
     return jsonify({'status': 'ok', 'data': report})
+
+
+@app.route('/api/agriculture/analytics/forecast', methods=['GET'])
+def get_agriculture_forecast():
+    device_id, hours, _ = get_analysis_request_args()
+    forecast = sensor_db.get_agriculture_forecast(device_id=device_id, hours=hours)
+    return jsonify({'status': 'ok', 'data': forecast})
+
+
+@app.route('/api/agriculture/analytics/yield', methods=['GET'])
+def get_agriculture_yield():
+    device_id, hours, _ = get_analysis_request_args()
+    prediction = sensor_db.get_agriculture_yield_prediction(device_id=device_id, hours=max(72, hours))
+    return jsonify({'status': 'ok', 'data': prediction})
+
+
+@app.route('/api/agriculture/analytics/decision', methods=['GET'])
+def get_agriculture_decision():
+    device_id, hours, _ = get_analysis_request_args()
+    decision = sensor_db.get_agriculture_decision_engine(device_id=device_id, hours=hours)
+    return jsonify({'status': 'ok', 'data': decision})
+
+
+@app.route('/api/agriculture/model', methods=['GET'])
+def get_agriculture_model():
+    device_id, hours, min_points, _ = get_model_request_args()
+    model = sensor_db.build_abstract_data_model(device_id=device_id, hours=hours, min_points=min_points)
+    return jsonify({'status': 'ok', 'data': model})
+
+
+@app.route('/api/agriculture/model/predict', methods=['GET'])
+def predict_agriculture_model():
+    device_id, hours, min_points, target = get_model_request_args()
+    prediction = sensor_db.predict_from_abstract_data_model(
+        device_id=device_id,
+        hours=hours,
+        min_points=min_points,
+        target=target,
+    )
+    return jsonify({'status': 'ok', 'data': prediction})
 
 
 @app.route('/api/workflow/save', methods=['POST'])
@@ -518,6 +565,32 @@ def execute_workflow():
             except Exception as exc:
                 payload = []
                 add_log(f"{indent}分析任务失败: {exc}")
+
+            written, converted = assign_variable_value(props.get('targetVariableId'), payload, variable_values, variable_defs_by_id)
+            if written:
+                add_log(f"{indent}写入变量成功: {converted if isinstance(converted, int) else 'JSON文本'}")
+            else:
+                add_log(f"{indent}未写入变量：未绑定 targetVariableId")
+            exec_node(props.get('nextNodeId'), depth)
+            return
+
+        if node_type == 'abstract_data_model':
+            device_id = str(props.get('deviceId') or '').strip() or 'SmartAgriculture_thermometer'
+            hours = max(24, min(safe_int(props.get('hours'), 168), 336))
+            min_points = max(12, min(safe_int(props.get('minPoints'), 24), 240))
+            payload: Any = {}
+            try:
+                payload = sensor_db.build_abstract_data_model(
+                    device_id=device_id,
+                    hours=hours,
+                    min_points=min_points,
+                )
+                status = payload.get('status', 'unknown') if isinstance(payload, dict) else 'unknown'
+                model_name = payload.get('model_name', '未知模型') if isinstance(payload, dict) else '未知模型'
+                add_log(f"{indent}抽象数据模型构建完成: status={status}, model={model_name}")
+            except Exception as exc:
+                payload = {'status': 'error', 'message': str(exc)}
+                add_log(f"{indent}抽象数据模型构建失败: {exc}")
 
             written, converted = assign_variable_value(props.get('targetVariableId'), payload, variable_values, variable_defs_by_id)
             if written:

@@ -589,6 +589,475 @@ class SensorDatabase:
             if (self._parse_timestamp(row.get("timestamp")) or datetime.now()) >= since_dt
         ]
 
+    def _series_values(self, rows: List[Dict[str, Any]], key: str) -> List[float]:
+        values: List[float] = []
+        for row in rows:
+            value = row.get(key)
+            if value is None:
+                continue
+            try:
+                values.append(float(value))
+            except (TypeError, ValueError):
+                continue
+        return values
+
+    def _average(self, values: List[float]) -> float:
+        return sum(values) / len(values) if values else 0.0
+
+    def _stddev(self, values: List[float]) -> float:
+        if len(values) < 2:
+            return 0.0
+        mean = self._average(values)
+        variance = sum((value - mean) ** 2 for value in values) / len(values)
+        return math.sqrt(variance)
+
+    def _sampling_interval_minutes(self, rows: List[Dict[str, Any]]) -> float:
+        if len(rows) < 2:
+            return 30.0
+        timestamps = [self._parse_timestamp(row.get("timestamp")) for row in rows]
+        timestamps = [ts for ts in timestamps if ts is not None]
+        if len(timestamps) < 2:
+            return 30.0
+        gaps = []
+        for index in range(1, len(timestamps)):
+            gaps.append((timestamps[index] - timestamps[index - 1]).total_seconds() / 60)
+        return max(1.0, self._average(gaps))
+
+    def _linear_forecast(self, values: List[float], steps: int = 1) -> float:
+        if not values:
+            return 0.0
+        if len(values) == 1:
+            return values[-1]
+        n = len(values)
+        x_mean = (n - 1) / 2
+        y_mean = self._average(values)
+        denominator = sum((index - x_mean) ** 2 for index in range(n))
+        if denominator == 0:
+            return values[-1]
+        slope = sum((index - x_mean) * (value - y_mean) for index, value in enumerate(values)) / denominator
+        target_x = (n - 1) + max(1, int(steps))
+        prediction = y_mean + slope * (target_x - x_mean)
+        return prediction
+
+    def _metric_stability(self, values: List[float]) -> float:
+        if len(values) < 2:
+            return 100.0
+        mean = abs(self._average(values)) or 1.0
+        cv = self._stddev(values) / mean
+        return _clamp(100.0 - cv * 100.0, 0.0, 100.0)
+
+    def _closeness_score(self, value: Optional[float], ideal: float, tolerance: float) -> float:
+        if value is None:
+            return 0.0
+        tolerance = max(1e-6, tolerance)
+        return _clamp(100.0 - abs(float(value) - ideal) / tolerance * 100.0, 0.0, 100.0)
+
+    def _bounded_prediction(self, value: float, minimum: float, maximum: float, digits: int = 2) -> float:
+        return round(_clamp(value, minimum, maximum), digits)
+
+    def _latest_value(self, rows: List[Dict[str, Any]], key: str) -> Optional[float]:
+        for row in reversed(rows):
+            value = row.get(key)
+            if value is None:
+                continue
+            try:
+                return float(value)
+            except (TypeError, ValueError):
+                continue
+        return None
+
+    def _build_metric_stats(self, rows: List[Dict[str, Any]], key: str) -> Dict[str, Any]:
+        values = self._series_values(rows, key)
+        if not values:
+            return {"current": None, "mean": None, "stddev": None, "min": None, "max": None, "stability": 0.0}
+        return {
+            "current": _safe_round(values[-1]),
+            "mean": _safe_round(self._average(values)),
+            "stddev": _safe_round(self._stddev(values)),
+            "min": _safe_round(min(values)),
+            "max": _safe_round(max(values)),
+            "stability": _safe_round(self._metric_stability(values)),
+        }
+
+    def get_agriculture_forecast(
+        self,
+        device_id: str = "SmartAgriculture_thermometer",
+        hours: int = 72,
+    ) -> Dict[str, Any]:
+        rows = self._fetch_rows_since(device_id=device_id, hours=hours)
+        if not rows:
+            return {
+                "method": "trend-regression",
+                "status": "insufficient-data",
+                "message": "当前缺少足够样本，无法生成预测结果。",
+                "sample_count": 0,
+            }
+
+        interval_minutes = self._sampling_interval_minutes(rows)
+        series_window = max(8, min(len(rows), 24))
+        recent_rows = rows[-series_window:]
+        horizon_6h = max(1, round(360 / interval_minutes))
+        horizon_24h = max(1, round(1440 / interval_minutes))
+
+        def predict_metric(key: str, bounds: tuple[float, float], digits: int = 2) -> Dict[str, Any]:
+            values = self._series_values(recent_rows, key)
+            if not values:
+                return {"next_6h": None, "next_24h": None, "trend": "unknown"}
+            current = values[-1]
+            next_6h = self._bounded_prediction(self._linear_forecast(values, steps=horizon_6h), bounds[0], bounds[1], digits)
+            next_24h = self._bounded_prediction(self._linear_forecast(values, steps=horizon_24h), bounds[0], bounds[1], digits)
+            delta = next_6h - current
+            if abs(delta) < 0.5:
+                trend = "stable"
+            elif delta > 0:
+                trend = "up"
+            else:
+                trend = "down"
+            return {
+                "current": _safe_round(current),
+                "next_6h": next_6h,
+                "next_24h": next_24h,
+                "trend": trend,
+            }
+
+        temperature = predict_metric("temperature", (10.0, 40.0))
+        humidity = predict_metric("humidity", (20.0, 100.0))
+        soil_humidity = predict_metric("soil_humidity", (10.0, 90.0))
+        pm25 = predict_metric("pm25", (0.0, 200.0))
+        light_lux = predict_metric("light_lux", (0.0, 50000.0), 0)
+
+        weather_summary_parts = []
+        if temperature["trend"] == "up":
+            weather_summary_parts.append("棚内温度有上升趋势")
+        elif temperature["trend"] == "down":
+            weather_summary_parts.append("棚内温度有回落趋势")
+        else:
+            weather_summary_parts.append("棚内温度整体平稳")
+
+        if soil_humidity["next_6h"] is not None and soil_humidity["next_6h"] <= 38:
+            weather_summary_parts.append("土壤湿度未来数小时可能继续偏低")
+        if humidity["next_6h"] is not None and humidity["next_6h"] >= 78:
+            weather_summary_parts.append("空气湿度偏高，需关注病害压力")
+
+        confidence = _clamp(55.0 + min(len(rows), 72) / 72 * 35.0, 55.0, 92.0)
+        confidence = (confidence + self._metric_stability(self._series_values(rows, "temperature")) * 0.1) / 1.1
+
+        return {
+            "method": "trend-regression",
+            "status": "ok",
+            "sample_count": len(rows),
+            "sampling_interval_minutes": _safe_round(interval_minutes),
+            "horizon_hours": [6, 24],
+            "predictions": {
+                "temperature": temperature,
+                "humidity": humidity,
+                "soil_humidity": soil_humidity,
+                "pm25": pm25,
+                "light_lux": light_lux,
+            },
+            "weather_summary": "；".join(weather_summary_parts) + "。",
+            "confidence": _safe_round(confidence),
+            "microclimate_state": (
+                "温热波动型"
+                if (temperature["next_6h"] or 0) >= 28 else
+                "湿润敏感型"
+                if (humidity["next_6h"] or 0) >= 75 else
+                "稳定适生型"
+            ),
+        }
+
+    def get_agriculture_yield_prediction(
+        self,
+        device_id: str = "SmartAgriculture_thermometer",
+        hours: int = 168,
+    ) -> Dict[str, Any]:
+        rows = self._fetch_rows_since(device_id=device_id, hours=max(72, hours))
+        if not rows:
+            return {
+                "status": "insufficient-data",
+                "message": "缺少足够历史数据，无法评估产量趋势。",
+            }
+
+        temp_values = self._series_values(rows, "temperature")
+        humidity_values = self._series_values(rows, "humidity")
+        soil_values = self._series_values(rows, "soil_humidity")
+        light_values = self._series_values(rows, "light_lux")
+        pm25_values = self._series_values(rows, "pm25")
+
+        avg_temp = self._average(temp_values)
+        avg_humidity = self._average(humidity_values)
+        avg_soil = self._average(soil_values)
+        avg_light = self._average(light_values)
+        avg_pm25 = self._average(pm25_values)
+
+        thermal_score = self._closeness_score(avg_temp, 24.0, 9.0)
+        humidity_score = self._closeness_score(avg_humidity, 65.0, 18.0)
+        soil_score = self._closeness_score(avg_soil, 52.0, 18.0)
+        light_score = self._closeness_score(avg_light, 18000.0, 13000.0)
+        air_score = self._closeness_score(avg_pm25, 18.0, 60.0)
+        stability_score = self._metric_stability(temp_values + soil_values)
+
+        yield_index = (
+            thermal_score * 0.22
+            + humidity_score * 0.16
+            + soil_score * 0.28
+            + light_score * 0.18
+            + air_score * 0.08
+            + stability_score * 0.08
+        )
+        estimated_yield = 280.0 + yield_index * 2.5
+
+        if yield_index >= 82:
+            grade = "高产潜力"
+        elif yield_index >= 68:
+            grade = "稳产潜力"
+        else:
+            grade = "需调控提升"
+
+        return {
+            "status": "ok",
+            "sample_count": len(rows),
+            "yield_index": _safe_round(yield_index),
+            "estimated_yield_kg_per_mu": _safe_round(estimated_yield),
+            "yield_grade": grade,
+            "factors": {
+                "thermal_score": _safe_round(thermal_score),
+                "humidity_score": _safe_round(humidity_score),
+                "soil_score": _safe_round(soil_score),
+                "light_score": _safe_round(light_score),
+                "air_score": _safe_round(air_score),
+                "stability_score": _safe_round(stability_score),
+            },
+            "narrative": (
+                "当前数据表明作物处于较稳定生长状态，若维持灌溉与通风策略，产量表现具备较好潜力。"
+                if yield_index >= 68 else
+                "当前环境条件仍存在改进空间，建议优先优化土壤湿度与微气候稳定性，以提升产量预期。"
+            ),
+        }
+
+    def get_agriculture_decision_engine(
+        self,
+        device_id: str = "SmartAgriculture_thermometer",
+        hours: int = 72,
+    ) -> Dict[str, Any]:
+        overview = self.get_agriculture_overview(device_id=device_id)
+        forecast = self.get_agriculture_forecast(device_id=device_id, hours=hours)
+        yield_prediction = self.get_agriculture_yield_prediction(device_id=device_id, hours=max(72, hours))
+
+        latest = overview.get("latest_reading") or {}
+        temperature = float(latest.get("temperature") or 0)
+        soil_humidity = float(latest.get("soil_humidity") or 0)
+        humidity = float(latest.get("humidity") or 0)
+        pm25 = float(latest.get("pm25") or 0)
+        future_temp = (((forecast.get("predictions") or {}).get("temperature") or {}).get("next_6h")) or temperature
+        future_soil = (((forecast.get("predictions") or {}).get("soil_humidity") or {}).get("next_6h")) or soil_humidity
+
+        disease_pressure = _clamp(((humidity - 60.0) * 1.2 + max(0.0, temperature - 24.0) * 4.0), 0.0, 100.0)
+        irrigation_urgency = _clamp(100.0 - self._closeness_score(soil_humidity, 52.0, 18.0), 0.0, 100.0)
+        ventilation_urgency = _clamp(max(0.0, future_temp - 26.0) * 15.0 + max(0.0, humidity - 72.0) * 1.5, 0.0, 100.0)
+        air_quality_pressure = _clamp((pm25 - 20.0) * 1.6, 0.0, 100.0)
+
+        decisions: List[Dict[str, Any]] = []
+
+        decisions.append({
+            "module": "irrigation-controller",
+            "score": _safe_round(irrigation_urgency),
+            "priority": "P1" if future_soil <= 38 else "P2",
+            "action": "立即灌溉" if future_soil <= 35 else "择时补水" if future_soil <= 42 else "维持观察",
+            "reason": f"当前土壤湿度 {soil_humidity:.1f}% ，预测 6 小时后约为 {future_soil:.1f}%。",
+        })
+        decisions.append({
+            "module": "ventilation-controller",
+            "score": _safe_round(ventilation_urgency),
+            "priority": "P1" if future_temp >= 29 else "P2",
+            "action": "开启通风/遮阳" if future_temp >= 28 else "保持低频通风" if future_temp >= 25 else "无需额外通风",
+            "reason": f"预测未来 6 小时温度约 {future_temp:.1f}°C，当前湿度 {humidity:.1f}%。",
+        })
+        decisions.append({
+            "module": "disease-risk-evaluator",
+            "score": _safe_round(disease_pressure),
+            "priority": "P1" if disease_pressure >= 70 else "P2",
+            "action": "重点巡检病害风险" if disease_pressure >= 65 else "维持常规巡检",
+            "reason": "基于温度与空气湿度组合估算病害压力。",
+        })
+        decisions.append({
+            "module": "air-quality-guard",
+            "score": _safe_round(air_quality_pressure),
+            "priority": "P2",
+            "action": "检查过滤与粉尘来源" if air_quality_pressure >= 45 else "空气质量可控",
+            "reason": f"当前 PM2.5 为 {pm25:.1f} μg/m³。",
+        })
+
+        recommended_action = max(decisions, key=lambda item: ({"P1": 2, "P2": 1}.get(item["priority"], 0), item["score"]))
+
+        return {
+            "status": "ok",
+            "risk_score": overview.get("risk_score"),
+            "yield_index": yield_prediction.get("yield_index"),
+            "modules": decisions,
+            "top_decision": recommended_action,
+            "decision_summary": (
+                f"当前最优先动作是“{recommended_action['action']}”，"
+                f"因为 {recommended_action['reason']}"
+            ),
+        }
+
+    def build_abstract_data_model(
+        self,
+        device_id: str = "SmartAgriculture_thermometer",
+        hours: int = 168,
+        min_points: int = 24,
+    ) -> Dict[str, Any]:
+        rows = self._fetch_rows_since(device_id=device_id, hours=max(24, hours))
+        if len(rows) < max(6, int(min_points)):
+            return {
+                "status": "insufficient-data",
+                "device_id": device_id,
+                "sample_count": len(rows),
+                "required_sample_count": max(6, int(min_points)),
+                "message": "样本量不足，暂时无法实例化抽象数据模型。",
+            }
+
+        overview = self.get_agriculture_overview(device_id=device_id)
+        forecast = self.get_agriculture_forecast(device_id=device_id, hours=hours)
+        decision_engine = self.get_agriculture_decision_engine(device_id=device_id, hours=hours)
+        yield_prediction = self.get_agriculture_yield_prediction(device_id=device_id, hours=hours)
+        timeline = self.get_agriculture_timeline(device_id=device_id, hours=min(hours, 96), bucket_minutes=180)
+
+        dimension_defs = [
+            ("thermal_stability", "温热稳定度", self._closeness_score(overview.get("avg_temperature_24h"), 24.0, 9.0)),
+            ("water_supply", "水分供给度", self._closeness_score(overview.get("avg_soil_humidity_24h"), 52.0, 18.0)),
+            ("light_activity", "光照活跃度", self._closeness_score(overview.get("max_light_24h"), 18000.0, 14000.0)),
+            ("air_cleanliness", "空气洁净度", self._closeness_score(overview.get("avg_pm25_24h"), 18.0, 60.0)),
+            ("growth_resilience", "生长韧性", self._average([
+                float(yield_prediction.get("yield_index") or 0),
+                float((decision_engine.get("risk_score") or 0)),
+            ])),
+        ]
+
+        dimensions = []
+        for key, label, raw_score in dimension_defs:
+            score = _clamp(raw_score, 0.0, 100.0)
+            dimensions.append({
+                "key": key,
+                "label": label,
+                "score": _safe_round(score),
+                "state": "high" if score >= 75 else "medium" if score >= 55 else "low",
+            })
+
+        dominant_dimension = max(dimensions, key=lambda item: item["score"])
+        weakest_dimension = min(dimensions, key=lambda item: item["score"])
+        sampling_interval = self._sampling_interval_minutes(rows)
+        forecast_predictions = forecast.get("predictions") or {}
+
+        model = {
+            "status": "ok",
+            "model_id": f"agri-twin-{device_id}-{len(rows)}",
+            "model_name": "智慧农业抽象数据模型",
+            "device_id": device_id,
+            "dataset_profile": {
+                "sample_count": len(rows),
+                "hours_covered": max(24, hours),
+                "sampling_interval_minutes": _safe_round(sampling_interval),
+                "time_start": rows[0].get("timestamp"),
+                "time_end": rows[-1].get("timestamp"),
+                "features": [
+                    "temperature",
+                    "humidity",
+                    "soil_humidity",
+                    "pm25",
+                    "light_lux",
+                    "atmospheric_pressure",
+                ],
+                "metric_stats": {
+                    "temperature": self._build_metric_stats(rows, "temperature"),
+                    "humidity": self._build_metric_stats(rows, "humidity"),
+                    "soil_humidity": self._build_metric_stats(rows, "soil_humidity"),
+                    "pm25": self._build_metric_stats(rows, "pm25"),
+                    "light_lux": self._build_metric_stats(rows, "light_lux"),
+                },
+            },
+            "abstract_dimensions": dimensions,
+            "latent_state": {
+                "dominant_dimension": dominant_dimension,
+                "weakest_dimension": weakest_dimension,
+                "climate_archetype": forecast.get("microclimate_state"),
+                "decision_mode": decision_engine.get("top_decision", {}).get("action"),
+            },
+            "predictions": {
+                "microclimate_forecast": forecast,
+                "yield_projection": yield_prediction,
+                "weather_tendency": {
+                    "summary": forecast.get("weather_summary"),
+                    "next_6h_temperature": (forecast_predictions.get("temperature") or {}).get("next_6h"),
+                    "next_6h_humidity": (forecast_predictions.get("humidity") or {}).get("next_6h"),
+                    "next_6h_soil_humidity": (forecast_predictions.get("soil_humidity") or {}).get("next_6h"),
+                },
+            },
+            "decision_outputs": decision_engine,
+            "visualization_contract": {
+                "recommended_views": [
+                    {"type": "line", "title": "温度与土壤湿度趋势", "x": "bucket", "y": ["temperature", "soil_humidity"]},
+                    {"type": "radar", "title": "抽象维度评分", "x": "label", "y": "score"},
+                    {"type": "card", "title": "关键预测结果", "fields": ["yield_index", "estimated_yield_kg_per_mu", "weather_summary"]},
+                    {"type": "decision-list", "title": "决策建议列表", "fields": ["module", "action", "priority", "score"]},
+                ],
+                "timeline": timeline,
+                "dimensions": dimensions,
+            },
+            "external_view": {
+                "summary": (
+                    f"该模型将数据集抽象为“{forecast.get('microclimate_state')}”微气候原型，"
+                    f"当前最强维度为“{dominant_dimension['label']}”，最弱维度为“{weakest_dimension['label']}”。"
+                ),
+                "interaction_hint": "外部系统可基于 visualization_contract 字段进行可视化渲染，并调用 predictions 与 decision_outputs 完成预测和决策展示。",
+            },
+        }
+        return model
+
+    def predict_from_abstract_data_model(
+        self,
+        device_id: str = "SmartAgriculture_thermometer",
+        hours: int = 168,
+        min_points: int = 24,
+        target: str = "all",
+    ) -> Dict[str, Any]:
+        model = self.build_abstract_data_model(device_id=device_id, hours=hours, min_points=min_points)
+        if model.get("status") != "ok":
+            return model
+
+        predictions = model.get("predictions") or {}
+        target_key = str(target or "all").strip().lower()
+        if target_key in {"all", ""}:
+            return {
+                "status": "ok",
+                "target": "all",
+                "model_id": model.get("model_id"),
+                "predictions": predictions,
+            }
+        if target_key in {"yield", "yield_projection"}:
+            return {
+                "status": "ok",
+                "target": "yield",
+                "model_id": model.get("model_id"),
+                "prediction": predictions.get("yield_projection"),
+            }
+        if target_key in {"climate", "microclimate"}:
+            return {
+                "status": "ok",
+                "target": "microclimate",
+                "model_id": model.get("model_id"),
+                "prediction": predictions.get("microclimate_forecast"),
+            }
+        if target_key in {"weather", "weather_tendency"}:
+            return {
+                "status": "ok",
+                "target": "weather",
+                "model_id": model.get("model_id"),
+                "prediction": predictions.get("weather_tendency"),
+            }
+        raise ValueError(f"Unsupported model prediction target: {target}")
+
     def get_agriculture_overview(self, device_id: str = "SmartAgriculture_thermometer") -> Dict[str, Any]:
         self.ensure_demo_sensor_history(device_id=device_id)
         sensor_info = self.get_sensor_by_id(device_id) or {}
@@ -885,6 +1354,14 @@ class SensorDatabase:
             return self.get_agriculture_recommendations(device_id=device_id)
         if analysis == "report":
             return self.get_agriculture_report_payload(device_id=device_id)
+        if analysis == "forecast":
+            return self.get_agriculture_forecast(device_id=device_id, hours=hours)
+        if analysis in {"yield", "yield_prediction"}:
+            return self.get_agriculture_yield_prediction(device_id=device_id, hours=max(72, hours))
+        if analysis in {"decision", "decision_engine"}:
+            return self.get_agriculture_decision_engine(device_id=device_id, hours=hours)
+        if analysis in {"model", "abstract_model"}:
+            return self.build_abstract_data_model(device_id=device_id, hours=max(24, hours), min_points=max(12, min(limit * 3, 96)))
         raise ValueError(f"Unsupported analysis type: {analysis_type}")
 
     def close(self):
