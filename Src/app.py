@@ -2,6 +2,10 @@ from __future__ import annotations
 
 import os
 import json
+import math
+import urllib.error
+import urllib.parse
+import urllib.request
 from atexit import register
 from typing import Any
 
@@ -298,6 +302,65 @@ def workflow_editor():
 @app.route('/screen-editor')
 def screen_editor():
     return render_template('screen_editor.html')
+
+
+OPEN_METEO_FORECAST_URL = 'https://api.open-meteo.com/v1/forecast'
+
+
+def _parse_query_float(name: str) -> float | None:
+    raw = request.args.get(name)
+    if raw is None:
+        return None
+    text = str(raw).strip()
+    if not text:
+        return None
+    try:
+        value = float(text.replace(',', '.'))
+    except (TypeError, ValueError, AttributeError):
+        return None
+    if math.isnan(value) or math.isinf(value):
+        return None
+    return value
+
+
+@app.route('/api/weather/forecast', methods=['GET'])
+def proxy_open_meteo_forecast():
+    lat = _parse_query_float('latitude')
+    lon = _parse_query_float('longitude')
+    if lat is None or lon is None:
+        return jsonify({
+            'status': 'error',
+            'message': '缺少或无法解析 latitude、longitude（例如 ?latitude=30.6&longitude=114.3）'
+        }), 400
+
+    lat = max(-90.0, min(90.0, lat))
+    lon = max(-180.0, min(180.0, lon))
+    params = urllib.parse.urlencode({
+        'latitude': lat,
+        'longitude': lon,
+        'current': 'temperature_2m,relative_humidity_2m,weather_code,wind_speed_10m',
+        'timezone': 'auto',
+    })
+    upstream = f'{OPEN_METEO_FORECAST_URL}?{params}'
+
+    try:
+        req = urllib.request.Request(
+            upstream,
+            headers={
+                'User-Agent': 'IA-Low-code-Development/1.0',
+                'Accept-Encoding': 'identity',
+            },
+            method='GET',
+        )
+        with urllib.request.urlopen(req, timeout=20) as resp:
+            body = resp.read()
+            if not body or not body.strip():
+                return jsonify({'status': 'error', 'message': '上游天气接口返回空内容'}), 502
+            return Response(body, mimetype='application/json', headers={'Cache-Control': 'no-store'})
+    except urllib.error.HTTPError as error:
+        return jsonify({'status': 'error', 'message': f'上游 HTTP {error.code}'}), 502
+    except Exception as error:
+        return jsonify({'status': 'error', 'message': str(error)}), 502
 
 
 @app.route('/api/agriculture/dashboard', methods=['GET'])

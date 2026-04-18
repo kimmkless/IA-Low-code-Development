@@ -3,6 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="ia-backend-origin" content="{{ request.host_url.rstrip('/') }}">
     <title>大屏应用编辑器</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='screenEditor.css') }}">
 </head>
@@ -26,7 +27,7 @@
     <main class="editor-layout">
         <aside class="components-panel">
             <div class="panel-header">组件库</div>
-            <div class="panel-subtitle">支持文本、图片、CSV 图表，以及智慧农业的系统数据卡、环境监测卡和通讯状态卡。</div>
+            <div class="panel-subtitle">支持文本、图片、CSV 图表、传感器数据与天气模块（Open-Meteo / 自定义接口）。</div>
             <div class="components-list" id="screenComponentLibrary"></div>
         </aside>
 
