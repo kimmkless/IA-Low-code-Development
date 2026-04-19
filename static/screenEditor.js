@@ -18,6 +18,15 @@ const MAX_CANVAS_ZOOM = 2;
 const CANVAS_TOOL_MOVE = 'move';
 const CANVAS_TOOL_RESIZE = 'resize';
 const RESIZE_HANDLE_DIRECTIONS = ['nw', 'ne', 'sw', 'se'];
+const CHART_DATA_LAYOUT_WIDE = 'wide';
+const CHART_DATA_LAYOUT_LONG = 'long';
+const CHART_SERIES_MODE_SINGLE = 'single';
+const CHART_SERIES_MODE_DOUBLE = 'double';
+const CHART_SERIES_MODE_MULTI = 'multi';
+const DEFAULT_CHART_AGGREGATION_LIMIT = 60;
+const MIN_CHART_AGGREGATION_LIMIT = 8;
+const MAX_CHART_AGGREGATION_LIMIT = 240;
+const CHART_COLORS = ['#2f80ed', '#56ccf2', '#6fcf97', '#f2c94c', '#f2994a', '#eb5757', '#9b51e0', '#27ae60'];
 
 const COMPONENT_LIBRARY = [
     {
@@ -36,19 +45,19 @@ const COMPONENT_LIBRARY = [
         type: 'chart-bar',
         icon: '📊',
         title: '柱状图表',
-        description: '导入 CSV 数据并显示为柱状图。'
+        description: '导入 CSV 数据，支持单柱、双柱、多柱对比与自动聚合。'
     },
     {
         type: 'chart-line',
         icon: '📈',
         title: '折线图表',
-        description: '导入 CSV 数据并显示为折线图。'
+        description: '导入 CSV 数据，支持单折线、双折线、多折线与自动聚合。'
     },
     {
         type: 'chart-pie',
         icon: '🥧',
         title: '饼图表',
-        description: '导入 CSV 数据并显示为饼图。'
+        description: '导入 CSV 数据并显示分类占比，不包含柱状/折线切换项。'
     },
     {
         type: 'agri-sensor',
@@ -328,7 +337,11 @@ function summarizeComponentProps(component) {
     if (!component) return '';
     if (component.type === 'text') return `文本：${component.props.text || ''}`;
     if (component.type === 'image') return `图片说明：${component.props.alt || '未设置'}`;
-    if (component.type === 'chart') return `图表类型：${component.props.chartType || 'bar'}`;
+    if (component.type === 'chart') {
+        const chartType = component.props.chartType === 'line' ? 'line' : component.props.chartType === 'pie' ? 'pie' : 'bar';
+        if (chartType === 'pie') return '图表组件：饼图';
+        return `图表模式：${getChartSeriesModeLabel(chartType, component.props.seriesMode || CHART_SERIES_MODE_MULTI)}`;
+    }
     if (component.type === 'weather') return `地点：${component.props.subtitle || '未命名'} · ${getWeatherDataMode(component) === WEATHER_DATA_MODE_API ? 'API' : '手动'}`;
     if (component.type === 'agri-sensor') return `传感器数量：${component.props.sensors?.length || 0}`;
     if (component.type === 'agri-model' || component.type === 'agri-climate' || component.type === 'agri-yield' || component.type === 'agri-decision') {
@@ -433,6 +446,98 @@ function buildSampleAgriTwinJson() {
     return JSON.stringify(buildSampleAgriTwinPayload(), null, 2);
 }
 
+function buildDefaultChartCsv(chartType = 'bar') {
+    if (chartType === 'pie') {
+        return '状态,占比\n正常,68\n预警,21\n异常,11';
+    }
+    return [
+        'time,device_id,value',
+        '08:00,A-01,23.8',
+        '08:00,B-02,24.3',
+        '09:00,A-01,24.4',
+        '09:00,B-02,25.1',
+        '10:00,A-01,25.0',
+        '10:00,B-02,25.8',
+        '11:00,A-01,25.5',
+        '11:00,B-02,26.2'
+    ].join('\n');
+}
+
+function createChartProps(chartType = 'bar') {
+    const normalizedType = chartType === 'line' || chartType === 'pie' ? chartType : 'bar';
+    return {
+        title: '',
+        chartType: normalizedType,
+        csvText: buildDefaultChartCsv(normalizedType),
+        labelColumn: '',
+        valueColumn: '',
+        valueColumns: [],
+        seriesColumn: '',
+        seriesMode: normalizedType === 'pie' ? CHART_SERIES_MODE_SINGLE : CHART_SERIES_MODE_DOUBLE,
+        selectedSeriesKeys: [],
+        dataLayout: normalizedType === 'pie' ? CHART_DATA_LAYOUT_WIDE : CHART_DATA_LAYOUT_LONG,
+        enableAggregation: true,
+        aggregationLimit: DEFAULT_CHART_AGGREGATION_LIMIT,
+        source: createDefaultSource()
+    };
+}
+
+function normalizeChartProps(rawProps, chartType = 'bar') {
+    const defaults = createChartProps(chartType);
+    const merged = {
+        ...defaults,
+        ...(rawProps || {})
+    };
+    const normalizedType = merged.chartType === 'line' || merged.chartType === 'pie' ? merged.chartType : 'bar';
+    const normalizedSeriesMode = normalizedType === 'pie'
+        ? CHART_SERIES_MODE_SINGLE
+        : merged.seriesMode === CHART_SERIES_MODE_SINGLE || merged.seriesMode === CHART_SERIES_MODE_DOUBLE
+            ? merged.seriesMode
+            : CHART_SERIES_MODE_MULTI;
+    const seriesLimit = normalizedSeriesMode === CHART_SERIES_MODE_SINGLE
+        ? 1
+        : normalizedSeriesMode === CHART_SERIES_MODE_DOUBLE
+            ? 2
+            : Number.MAX_SAFE_INTEGER;
+
+    return {
+        ...merged,
+        chartType: normalizedType,
+        csvText: typeof merged.csvText === 'string' ? merged.csvText : defaults.csvText,
+        labelColumn: typeof merged.labelColumn === 'string' ? merged.labelColumn : '',
+        valueColumn: typeof merged.valueColumn === 'string' ? merged.valueColumn : '',
+        seriesColumn: typeof merged.seriesColumn === 'string' ? merged.seriesColumn : '',
+        valueColumns: Array.isArray(merged.valueColumns)
+            ? merged.valueColumns.filter(item => typeof item === 'string').slice(0, seriesLimit)
+            : typeof merged.valueColumn === 'string' && merged.valueColumn
+                ? [merged.valueColumn]
+                : [],
+        seriesMode: normalizedSeriesMode,
+        selectedSeriesKeys: Array.isArray(merged.selectedSeriesKeys)
+            ? merged.selectedSeriesKeys.filter(item => typeof item === 'string').slice(0, seriesLimit)
+            : [],
+        dataLayout: normalizedType === 'pie'
+            ? CHART_DATA_LAYOUT_WIDE
+            : merged.dataLayout === CHART_DATA_LAYOUT_WIDE
+                ? CHART_DATA_LAYOUT_WIDE
+                : CHART_DATA_LAYOUT_LONG,
+        enableAggregation: merged.enableAggregation !== false,
+        aggregationLimit: clamp(
+            Number(merged.aggregationLimit) || DEFAULT_CHART_AGGREGATION_LIMIT,
+            MIN_CHART_AGGREGATION_LIMIT,
+            MAX_CHART_AGGREGATION_LIMIT
+        ),
+        source: normalizeSource(merged.source)
+    };
+}
+
+function updateChartProps(component, partialProps = {}) {
+    component.props = normalizeChartProps({
+        ...component.props,
+        ...partialProps
+    }, partialProps.chartType || component.props.chartType || 'bar');
+}
+
 function createTextComponent(x, y) {
     return {
         id: state.nextId++,
@@ -481,14 +586,7 @@ function createChartComponent(x, y, chartType = 'bar') {
         y,
         width: 520,
         height: 320,
-        props: {
-            title: '',
-            chartType: chartType || 'bar',
-            csvText: '类别,值\n销售,120\n成本,80\n利润,45',
-            labelColumn: '',
-            valueColumn: '',
-            source: createDefaultSource()
-        }
+        props: createChartProps(chartType)
     };
 }
 
@@ -664,11 +762,16 @@ function normalizeComponent(rawComponent) {
     component.y = Number.isFinite(Number(rawComponent?.y)) ? Number(rawComponent.y) : component.y;
     component.width = Number.isFinite(Number(rawComponent?.width)) ? Number(rawComponent.width) : component.width;
     component.height = Number.isFinite(Number(rawComponent?.height)) ? Number(rawComponent.height) : component.height;
-    component.props = {
+    const mergedProps = {
         ...component.props,
-        ...(rawComponent?.props || {}),
-        source: normalizeSource(rawComponent?.props?.source)
+        ...(rawComponent?.props || {})
     };
+    component.props = type === 'chart'
+        ? normalizeChartProps(mergedProps, mergedProps.chartType || chartType)
+        : {
+            ...mergedProps,
+            source: normalizeSource(rawComponent?.props?.source)
+        };
     return component;
 }
 
@@ -1161,39 +1264,326 @@ function parseCsvText(text) {
     return { headers, records };
 }
 
-function resolveChartColumns(parsed, component) {
+function getNumericChartHeaders(parsed) {
     const headers = Array.isArray(parsed?.headers) ? parsed.headers : [];
     const records = Array.isArray(parsed?.records) ? parsed.records : [];
+    return headers.filter(header => records.some(record => Number.isFinite(Number(record?.[header]))));
+}
+
+function getChartSeriesModeLimit(seriesMode) {
+    if (seriesMode === CHART_SERIES_MODE_SINGLE) return 1;
+    if (seriesMode === CHART_SERIES_MODE_DOUBLE) return 2;
+    return Number.MAX_SAFE_INTEGER;
+}
+
+function applyChartSeriesMode(items, seriesMode) {
+    return items.slice(0, getChartSeriesModeLimit(seriesMode));
+}
+
+function getChartSeriesModeOptions(chartType) {
+    if (chartType === 'line') {
+        return [
+            { value: CHART_SERIES_MODE_SINGLE, label: '单折线图' },
+            { value: CHART_SERIES_MODE_DOUBLE, label: '双折线图' },
+            { value: CHART_SERIES_MODE_MULTI, label: '多折线图' }
+        ];
+    }
+    return [
+        { value: CHART_SERIES_MODE_SINGLE, label: '单柱状图' },
+        { value: CHART_SERIES_MODE_DOUBLE, label: '双柱状图' },
+        { value: CHART_SERIES_MODE_MULTI, label: '多柱状图' }
+    ];
+}
+
+function getChartSeriesModeLabel(chartType, seriesMode) {
+    const match = getChartSeriesModeOptions(chartType).find(item => item.value === seriesMode);
+    return match?.label || (chartType === 'line' ? '多折线图' : '多柱状图');
+}
+
+function averageNumericValues(values) {
+    const validValues = values.filter(Number.isFinite);
+    if (!validValues.length) return null;
+    return validValues.reduce((sum, value) => sum + value, 0) / validValues.length;
+}
+
+function resolveChartConfig(parsed, component) {
+    const headers = Array.isArray(parsed?.headers) ? parsed.headers : [];
+    const records = Array.isArray(parsed?.records) ? parsed.records : [];
+    const numericHeaders = getNumericChartHeaders(parsed);
+    const chartType = component.props.chartType === 'line' || component.props.chartType === 'pie'
+        ? component.props.chartType
+        : 'bar';
+    const seriesMode = chartType === 'pie'
+        ? CHART_SERIES_MODE_SINGLE
+        : component.props.seriesMode === CHART_SERIES_MODE_SINGLE || component.props.seriesMode === CHART_SERIES_MODE_DOUBLE
+            ? component.props.seriesMode
+            : CHART_SERIES_MODE_MULTI;
     const fallbackLabelColumn = headers[0] || '';
-    const numericColumns = headers.filter(header => records.some(record => Number.isFinite(Number(record?.[header]))));
-    const fallbackValueColumn = numericColumns[0] || headers[1] || headers[0] || '';
+    const labelColumn = headers.includes(component.props.labelColumn)
+        ? component.props.labelColumn
+        : fallbackLabelColumn;
+    const numericValueCandidates = numericHeaders.filter(header => header !== labelColumn);
+    const fallbackValueColumn = numericValueCandidates[0] || numericHeaders[0] || headers.find(header => header !== labelColumn) || '';
+    const valueColumn = headers.includes(component.props.valueColumn)
+        ? component.props.valueColumn
+        : fallbackValueColumn;
+    const fallbackSeriesColumn = headers.find(header => header !== labelColumn && header !== valueColumn)
+        || headers.find(header => header !== labelColumn)
+        || '';
+    const seriesColumn = headers.includes(component.props.seriesColumn) && component.props.seriesColumn !== labelColumn
+        ? component.props.seriesColumn
+        : fallbackSeriesColumn;
+    let valueColumns = Array.isArray(component.props.valueColumns)
+        ? component.props.valueColumns.filter(header => numericHeaders.includes(header) && header !== labelColumn)
+        : [];
+
+    if (!valueColumns.length && valueColumn && numericHeaders.includes(valueColumn) && valueColumn !== labelColumn) {
+        valueColumns = [valueColumn];
+    }
+    if (!valueColumns.length) {
+        valueColumns = numericValueCandidates.slice();
+    }
+    valueColumns = applyChartSeriesMode(valueColumns, seriesMode);
+
+    const requestedLayout = component.props.dataLayout === CHART_DATA_LAYOUT_WIDE
+        ? CHART_DATA_LAYOUT_WIDE
+        : CHART_DATA_LAYOUT_LONG;
+    const uniqueSeriesCount = new Set(
+        records
+            .map(record => String(record?.[seriesColumn] ?? '').trim())
+            .filter(Boolean)
+    ).size;
+    const hasSeriesRepeats = uniqueSeriesCount > 0 && uniqueSeriesCount < records.length;
+    const supportsLongLayout = headers.length >= 3
+        && Boolean(labelColumn)
+        && Boolean(seriesColumn)
+        && Boolean(valueColumn)
+        && seriesColumn !== labelColumn
+        && seriesColumn !== valueColumn
+        && (!numericHeaders.includes(seriesColumn) || hasSeriesRepeats)
+        && numericHeaders.includes(valueColumn);
+    const seriesOptions = seriesColumn
+        ? Array.from(new Set(
+            records
+                .map(record => String(record?.[seriesColumn] ?? '').trim())
+                .filter(Boolean)
+        ))
+        : [];
+    const selectedSeriesKeys = applyChartSeriesMode(
+        Array.isArray(component.props.selectedSeriesKeys)
+            ? component.props.selectedSeriesKeys.filter(key => seriesOptions.includes(key))
+            : [],
+        seriesMode
+    );
 
     return {
-        labelColumn: headers.includes(component.props.labelColumn) ? component.props.labelColumn : fallbackLabelColumn,
-        valueColumn: headers.includes(component.props.valueColumn) ? component.props.valueColumn : fallbackValueColumn
+        chartType,
+        labelColumn,
+        valueColumn,
+        valueColumns,
+        seriesColumn,
+        seriesMode,
+        seriesOptions,
+        selectedSeriesKeys,
+        dataLayout: chartType === 'pie'
+            ? CHART_DATA_LAYOUT_WIDE
+            : requestedLayout === CHART_DATA_LAYOUT_WIDE
+                ? CHART_DATA_LAYOUT_WIDE
+                : supportsLongLayout
+                    ? CHART_DATA_LAYOUT_LONG
+                    : CHART_DATA_LAYOUT_WIDE,
+        enableAggregation: component.props.enableAggregation !== false,
+        aggregationLimit: clamp(
+            Number(component.props.aggregationLimit) || DEFAULT_CHART_AGGREGATION_LIMIT,
+            MIN_CHART_AGGREGATION_LIMIT,
+            MAX_CHART_AGGREGATION_LIMIT
+        ),
+        headers,
+        numericHeaders
     };
 }
 
-function buildChartRows(parsed, columns) {
+function buildWideChartData(parsed, config) {
     const records = Array.isArray(parsed?.records) ? parsed.records : [];
-    const MAX_ROWS = 100; // 数据上限为100行
-    if (records.length > MAX_ROWS) {
-        return { error: `数据行数过多（${records.length}），最多支持 ${MAX_ROWS} 行。`, rows: [] };
+    if (!config.valueColumns.length) {
+        return { error: '宽表模式下至少需要选择一个数值列。' };
     }
-    const rows = records.map((record, index) => {
-        const labelText = String(record?.[columns.labelColumn] ?? '').trim();
-        const value = Number(record?.[columns.valueColumn]);
-        return {
-            label: labelText || `行 ${index + 1}`,
-            value: Number.isFinite(value) ? value : 0
-        };
+
+    const labels = [];
+    const series = config.valueColumns.map(column => ({
+        key: column,
+        label: column,
+        values: []
+    }));
+
+    records.forEach((record, index) => {
+        const labelText = String(record?.[config.labelColumn] ?? '').trim();
+        labels.push(labelText || `行 ${index + 1}`);
+        config.valueColumns.forEach((column, seriesIndex) => {
+            const value = Number(record?.[column]);
+            series[seriesIndex].values.push(Number.isFinite(value) ? value : null);
+        });
     });
 
-    if (!rows.length) {
-        return { error: 'CSV 中未解析到可视化数据。', rows: [] };
+    const validSeries = series.filter(item => item.values.some(Number.isFinite));
+    if (!labels.length || !validSeries.length) {
+        return { error: 'CSV 中未解析到有效的宽表图表数据。' };
     }
 
-    return { rows };
+    return {
+        kind: 'series',
+        labels,
+        series: validSeries,
+        pointCount: labels.length,
+        seriesCount: validSeries.length,
+        layout: CHART_DATA_LAYOUT_WIDE,
+        aggregated: false,
+        originalPointCount: labels.length,
+        aggregationGroupSize: 1
+    };
+}
+
+function buildLongChartData(parsed, config) {
+    const records = Array.isArray(parsed?.records) ? parsed.records : [];
+    if (!config.labelColumn || !config.seriesColumn || !config.valueColumn) {
+        return { error: '长表模式需要同时指定时间/标签列、系列列和数值列。' };
+    }
+
+    const labelBuckets = new Map();
+    const labelOrder = [];
+    const seriesOrder = [];
+    const seriesSeen = new Set();
+    let validCount = 0;
+
+    records.forEach((record, index) => {
+        const labelText = String(record?.[config.labelColumn] ?? '').trim() || `行 ${index + 1}`;
+        const seriesName = String(record?.[config.seriesColumn] ?? '').trim() || '默认系列';
+        const value = Number(record?.[config.valueColumn]);
+
+        if (!labelBuckets.has(labelText)) {
+            labelBuckets.set(labelText, new Map());
+            labelOrder.push(labelText);
+        }
+        if (!seriesSeen.has(seriesName)) {
+            seriesSeen.add(seriesName);
+            seriesOrder.push(seriesName);
+        }
+        if (!Number.isFinite(value)) return;
+
+        validCount += 1;
+        const seriesMap = labelBuckets.get(labelText);
+        const bucket = seriesMap.get(seriesName) || [];
+        bucket.push(value);
+        seriesMap.set(seriesName, bucket);
+    });
+
+    if (!validCount || !labelOrder.length || !seriesOrder.length) {
+        return { error: 'CSV 中未解析到有效的长表图表数据。' };
+    }
+
+    const visibleSeriesOrder = config.selectedSeriesKeys.length
+        ? config.selectedSeriesKeys.filter(seriesName => seriesOrder.includes(seriesName))
+        : applyChartSeriesMode(seriesOrder, config.seriesMode);
+    const series = visibleSeriesOrder.map(seriesName => ({
+        key: seriesName,
+        label: seriesName,
+        values: labelOrder.map(label => {
+            const values = labelBuckets.get(label)?.get(seriesName) || [];
+            return averageNumericValues(values);
+        })
+    })).filter(item => item.values.some(Number.isFinite));
+
+    if (!series.length) {
+        return { error: '按系列分组后未得到可绘制的数据。' };
+    }
+
+    return {
+        kind: 'series',
+        labels: labelOrder,
+        series,
+        pointCount: labelOrder.length,
+        seriesCount: series.length,
+        layout: CHART_DATA_LAYOUT_LONG,
+        aggregated: false,
+        originalPointCount: labelOrder.length,
+        aggregationGroupSize: 1
+    };
+}
+
+function aggregateChartSeriesData(data, aggregationLimit) {
+    if (!data || data.kind !== 'series') return data;
+    if (!data.labels.length || data.labels.length <= aggregationLimit) return data;
+
+    const groupSize = Math.ceil(data.labels.length / aggregationLimit);
+    const aggregatedLabels = [];
+    const aggregatedSeries = data.series.map(item => ({
+        ...item,
+        values: []
+    }));
+
+    for (let startIndex = 0; startIndex < data.labels.length; startIndex += groupSize) {
+        const endIndex = Math.min(startIndex + groupSize, data.labels.length);
+        const labelSlice = data.labels.slice(startIndex, endIndex);
+        const firstLabel = labelSlice[0] || '';
+        const lastLabel = labelSlice[labelSlice.length - 1] || '';
+        aggregatedLabels.push(firstLabel === lastLabel ? firstLabel : `${firstLabel} ~ ${lastLabel}`);
+
+        data.series.forEach((item, seriesIndex) => {
+            const values = item.values.slice(startIndex, endIndex);
+            aggregatedSeries[seriesIndex].values.push(averageNumericValues(values));
+        });
+    }
+
+    return {
+        ...data,
+        labels: aggregatedLabels,
+        series: aggregatedSeries,
+        pointCount: aggregatedLabels.length,
+        aggregated: true,
+        originalPointCount: data.labels.length,
+        aggregationGroupSize: groupSize
+    };
+}
+
+function buildPieChartData(parsed, config) {
+    const records = Array.isArray(parsed?.records) ? parsed.records : [];
+    if (!config.labelColumn || !config.valueColumn) {
+        return { error: '饼图需要同时指定标签列和数值列。' };
+    }
+
+    const rows = records.map((record, index) => {
+        const labelText = String(record?.[config.labelColumn] ?? '').trim();
+        const value = Number(record?.[config.valueColumn]);
+        return {
+            label: labelText || `项 ${index + 1}`,
+            value: Number.isFinite(value) ? value : null
+        };
+    }).filter(item => Number.isFinite(item.value));
+
+    if (!rows.length) {
+        return { error: '饼图未解析到有效数值。' };
+    }
+
+    return {
+        kind: 'pie',
+        rows,
+        pointCount: rows.length,
+        seriesCount: 1
+    };
+}
+
+function buildChartData(parsed, config) {
+    if (config.chartType === 'pie') {
+        return buildPieChartData(parsed, config);
+    }
+
+    const baseData = config.dataLayout === CHART_DATA_LAYOUT_LONG
+        ? buildLongChartData(parsed, config)
+        : buildWideChartData(parsed, config);
+
+    if (baseData?.error) return baseData;
+    if (!config.enableAggregation) return baseData;
+    return aggregateChartSeriesData(baseData, config.aggregationLimit);
 }
 
 function getChartRenderState(component) {
@@ -1210,7 +1600,8 @@ function getChartRenderState(component) {
                 chartType: component.props.chartType || 'bar',
                 csvText: '',
                 parsed: { error: '当前工作流端口无可用 CSV 数据。' },
-                sourceNote
+                sourceNote,
+                config: resolveChartConfig({ headers: [], records: [] }, component)
             };
         }
     }
@@ -1221,125 +1612,265 @@ function getChartRenderState(component) {
             chartType: component.props.chartType || 'bar',
             csvText,
             parsed,
-            sourceNote
+            sourceNote,
+            config: resolveChartConfig({ headers: [], records: [] }, component)
         };
     }
 
-    const columns = resolveChartColumns(parsed, component);
-    const chartRows = buildChartRows(parsed, columns);
+    const config = resolveChartConfig(parsed, component);
+    const chartData = buildChartData(parsed, config);
     return {
-        chartType: component.props.chartType || 'bar',
+        chartType: config.chartType,
         csvText,
         parsed,
-        chartRows,
-        ...columns,
+        config,
+        chartData,
         sourceNote
     };
 }
 
-function renderChartSvg(chartType, rows, width, height) {
-    const padding = 20;
-    const innerWidth = Math.max(width - padding * 2, 120);
-    const innerHeight = Math.max(height - padding * 2, 120);
-    const colors = ['#2f80ed', '#56ccf2', '#6fcf97', '#f2c94c', '#f2994a', '#eb5757'];
+function formatChartNumber(value) {
+    const number = Number(value);
+    if (!Number.isFinite(number)) return '--';
+    return new Intl.NumberFormat('zh-CN', {
+        maximumFractionDigits: 2
+    }).format(number);
+}
 
+function truncateChartAxisLabel(label, maxLength = 10) {
+    const text = String(label ?? '');
+    return text.length <= maxLength ? text : `${text.slice(0, maxLength - 1)}…`;
+}
+
+function getChartAxisLabelStep(count) {
+    return Math.max(1, Math.ceil(count / 8));
+}
+
+function renderChartLegend(items) {
+    if (!items.length) return '';
+    const markup = items.map(item => `
+        <div class="chart-legend-item"><span style="background:${item.color}"></span>${escapeHtml(item.label)}</div>
+    `).join('');
+    return `<div class="chart-legend">${markup}</div>`;
+}
+
+function renderPieChartSvg(data, width, height) {
+    const rows = Array.isArray(data?.rows) ? data.rows : [];
     if (!rows.length) {
         return `<div class="chart-error">无有效数据</div>`;
     }
 
-    if (chartType === 'pie') {
-        const total = rows.reduce((sum, item) => sum + Math.max(0, item.value), 0) || 1;
-        const radius = Math.min(innerWidth, innerHeight) * 0.35;
-        let startAngle = 0;
-        const centerX = width / 2;
-        const centerY = height / 2;
-        const slices = rows.map((item, index) => {
-            const value = Math.max(0, item.value);
-            const angle = (value / total) * Math.PI * 2;
-            const endAngle = startAngle + angle;
-            const x1 = centerX + radius * Math.cos(startAngle);
-            const y1 = centerY + radius * Math.sin(startAngle);
-            const x2 = centerX + radius * Math.cos(endAngle);
-            const y2 = centerY + radius * Math.sin(endAngle);
-            const largeArc = angle > Math.PI ? 1 : 0;
-            const path = `M ${centerX} ${centerY} L ${x1} ${y1} A ${radius} ${radius} 0 ${largeArc} 1 ${x2} ${y2} Z`;
-            startAngle = endAngle;
-            return `<path d="${path}" fill="${colors[index % colors.length]}" />`;
-        }).join('');
+    const padding = 20;
+    const innerWidth = Math.max(width - padding * 2, 120);
+    const innerHeight = Math.max(height - padding * 2, 120);
+    const total = rows.reduce((sum, item) => sum + Math.max(0, Number(item.value) || 0), 0) || 1;
+    const radius = Math.min(innerWidth, innerHeight) * 0.35;
+    const centerX = width / 2;
+    const centerY = height / 2;
+    let startAngle = -Math.PI / 2;
+    const slices = rows.map((item, index) => {
+        const value = Math.max(0, Number(item.value) || 0);
+        const angle = (value / total) * Math.PI * 2;
+        const endAngle = startAngle + angle;
+        const x1 = centerX + radius * Math.cos(startAngle);
+        const y1 = centerY + radius * Math.sin(startAngle);
+        const x2 = centerX + radius * Math.cos(endAngle);
+        const y2 = centerY + radius * Math.sin(endAngle);
+        const largeArc = angle > Math.PI ? 1 : 0;
+        const path = `M ${centerX} ${centerY} L ${x1} ${y1} A ${radius} ${radius} 0 ${largeArc} 1 ${x2} ${y2} Z`;
+        startAngle = endAngle;
+        return `<path d="${path}" fill="${CHART_COLORS[index % CHART_COLORS.length]}" />`;
+    }).join('');
 
-        const legend = rows.slice(0, 10).map((item, index) => `
-            <div class="chart-legend-item"><span style="background:${colors[index % colors.length]}"></span>${escapeHtml(item.label)}</div>
-        `).join('');
+    const legend = renderChartLegend(rows.slice(0, 12).map((item, index) => ({
+        label: `${item.label} (${formatChartNumber(item.value)})`,
+        color: CHART_COLORS[index % CHART_COLORS.length]
+    })));
 
-        return `
-            <svg width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" role="img" aria-label="饼图">
-                ${slices}
-            </svg>
-            <div class="chart-legend">${legend}</div>
-        `;
+    return `
+        <svg width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" role="img" aria-label="饼图">
+            ${slices}
+        </svg>
+        ${legend}
+    `;
+}
+
+function renderSeriesChartSvg(chartType, data, width, height) {
+    const labels = Array.isArray(data?.labels) ? data.labels : [];
+    const series = Array.isArray(data?.series) ? data.series : [];
+    const validValues = series.flatMap(item => item.values.filter(Number.isFinite));
+
+    if (!labels.length || !series.length || !validValues.length) {
+        return `<div class="chart-error">无有效数据</div>`;
     }
 
-    const maxValue = Math.max(...rows.map(item => item.value), 0) || 1;
-    const barWidth = innerWidth / Math.max(rows.length, 1) * 0.6;
-    const gap = innerWidth / Math.max(rows.length, 1) * 0.4;
-    const points = rows.map((item, index) => {
-        const x = padding + gap / 2 + index * (barWidth + gap) + barWidth / 2;
-        const y = padding + innerHeight - (item.value / maxValue) * innerHeight;
-        return { x, y, label: item.label, value: item.value };
-    });
+    const paddingLeft = 46;
+    const paddingRight = 18;
+    const paddingTop = 18;
+    const paddingBottom = 30;
+    const innerWidth = Math.max(width - paddingLeft - paddingRight, 120);
+    const innerHeight = Math.max(height - paddingTop - paddingBottom, 120);
+    const rawMin = Math.min(...validValues, 0);
+    const rawMax = Math.max(...validValues, 0);
+    const minValue = rawMin > 0 ? 0 : rawMin;
+    const maxValue = rawMax < 0 ? 0 : rawMax;
+    const valueRange = maxValue - minValue || 1;
+    const zeroY = paddingTop + ((maxValue - 0) / valueRange) * innerHeight;
+    const axisLabelStep = getChartAxisLabelStep(labels.length);
+    const gridCount = 4;
+    const axisY = minValue < 0 ? zeroY : paddingTop + innerHeight;
+    const legend = series.length > 1
+        ? renderChartLegend(series.map((item, index) => ({
+            label: item.label,
+            color: CHART_COLORS[index % CHART_COLORS.length]
+        })))
+        : '';
+    const gridLines = Array.from({ length: gridCount + 1 }, (_, index) => {
+        const ratio = index / gridCount;
+        const value = maxValue - ratio * (maxValue - minValue);
+        const y = paddingTop + ratio * innerHeight;
+        return `
+            <line x1="${paddingLeft}" y1="${y}" x2="${paddingLeft + innerWidth}" y2="${y}" stroke="#d7e2ea" stroke-width="1" stroke-dasharray="3 4" />
+            <text x="${paddingLeft - 8}" y="${y + 4}" text-anchor="end" font-size="10" fill="#6b7d8c">${escapeHtml(formatChartNumber(value))}</text>
+        `;
+    }).join('');
 
     if (chartType === 'line') {
-        const pathD = points.map((point, index) => `${index === 0 ? 'M' : 'L'} ${point.x} ${point.y}`).join(' ');
-        const circles = points.map((point, index) => `
-            <circle cx="${point.x}" cy="${point.y}" r="4" fill="${colors[index % colors.length]}" />
-        `).join('');
-        const labels = points.map(point => `
-            <text x="${point.x}" y="${height - 6}" text-anchor="middle" font-size="10" fill="#475569">${escapeHtml(point.label)}</text>
-        `).join('');
+        const getX = (index) => labels.length === 1
+            ? paddingLeft + innerWidth / 2
+            : paddingLeft + (index * innerWidth) / Math.max(labels.length - 1, 1);
+        const labelsMarkup = labels.map((label, index) => {
+            if (index % axisLabelStep !== 0 && index !== labels.length - 1) return '';
+            return `
+                <text x="${getX(index)}" y="${height - 8}" text-anchor="middle" font-size="10" fill="#475569">${escapeHtml(truncateChartAxisLabel(label))}</text>
+            `;
+        }).join('');
+        const lines = series.map((item, seriesIndex) => {
+            const color = CHART_COLORS[seriesIndex % CHART_COLORS.length];
+            let pathD = '';
+            let pathOpen = false;
+            const circles = item.values.map((value, index) => {
+                if (!Number.isFinite(value)) {
+                    pathOpen = false;
+                    return '';
+                }
+                const x = getX(index);
+                const y = paddingTop + ((maxValue - value) / valueRange) * innerHeight;
+                pathD += `${pathOpen ? 'L' : 'M'} ${x} ${y} `;
+                pathOpen = true;
+                return `<circle cx="${x}" cy="${y}" r="3.5" fill="${color}" />`;
+            }).join('');
+            return `
+                <path d="${pathD.trim()}" fill="none" stroke="${color}" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" />
+                ${circles}
+            `;
+        }).join('');
+
         return `
             <svg width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" role="img" aria-label="折线图">
-                <path d="${pathD}" fill="none" stroke="#2f80ed" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" />
-                ${circles}
-                <line x1="${padding}" y1="${padding + innerHeight}" x2="${padding + innerWidth}" y2="${padding + innerHeight}" stroke="#cbd5e1" stroke-width="1" />
-                ${labels}
+                ${gridLines}
+                <line x1="${paddingLeft}" y1="${axisY}" x2="${paddingLeft + innerWidth}" y2="${axisY}" stroke="#9fb3c4" stroke-width="1.2" />
+                ${lines}
+                ${labelsMarkup}
             </svg>
+            ${legend}
         `;
     }
 
-    const bars = points.map((point, index) => {
-        const heightValue = innerHeight - (point.y - padding);
+    const categoryWidth = innerWidth / Math.max(labels.length, 1);
+    const groupWidth = Math.max(categoryWidth * 0.78, 8);
+    const barGap = Math.min(groupWidth * 0.12, 4);
+    const barWidth = Math.max((groupWidth - barGap * Math.max(series.length - 1, 0)) / Math.max(series.length, 1), 4);
+    const showValueLabels = labels.length <= 12 && series.length <= 2;
+    const labelsMarkup = labels.map((label, index) => {
+        if (index % axisLabelStep !== 0 && index !== labels.length - 1) return '';
+        const x = paddingLeft + categoryWidth * index + categoryWidth / 2;
         return `
-            <rect x="${point.x - barWidth / 2}" y="${point.y}" width="${barWidth}" height="${heightValue}" fill="${colors[index % colors.length]}" />
-            <text x="${point.x}" y="${point.y - 6}" text-anchor="middle" font-size="10" fill="#102a43">${point.value}</text>
-            <text x="${point.x}" y="${height - 6}" text-anchor="middle" font-size="10" fill="#475569">${escapeHtml(point.label)}</text>
+            <text x="${x}" y="${height - 8}" text-anchor="middle" font-size="10" fill="#475569">${escapeHtml(truncateChartAxisLabel(label))}</text>
         `;
+    }).join('');
+    const bars = labels.map((label, labelIndex) => {
+        const centerX = paddingLeft + categoryWidth * labelIndex + categoryWidth / 2;
+        const groupStart = centerX - groupWidth / 2;
+        return series.map((item, seriesIndex) => {
+            const value = item.values[labelIndex];
+            if (!Number.isFinite(value)) return '';
+
+            const color = CHART_COLORS[seriesIndex % CHART_COLORS.length];
+            const x = groupStart + seriesIndex * (barWidth + barGap);
+            const y = paddingTop + ((maxValue - Math.max(value, 0)) / valueRange) * innerHeight;
+            const yForValue = paddingTop + ((maxValue - value) / valueRange) * innerHeight;
+            const barY = value >= 0 ? yForValue : zeroY;
+            const barHeight = Math.max(Math.abs(zeroY - yForValue), 1);
+            return `
+                <rect x="${x}" y="${barY}" width="${barWidth}" height="${barHeight}" rx="${Math.min(4, barWidth / 2)}" fill="${color}" />
+                ${showValueLabels ? `<text x="${x + barWidth / 2}" y="${barY - 6}" text-anchor="middle" font-size="10" fill="#102a43">${escapeHtml(formatChartNumber(value))}</text>` : ''}
+            `;
+        }).join('');
     }).join('');
 
     return `
         <svg width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" role="img" aria-label="柱状图">
-            <line x1="${padding}" y1="${padding + innerHeight}" x2="${padding + innerWidth}" y2="${padding + innerHeight}" stroke="#cbd5e1" stroke-width="1" />
+            ${gridLines}
+            <line x1="${paddingLeft}" y1="${axisY}" x2="${paddingLeft + innerWidth}" y2="${axisY}" stroke="#9fb3c4" stroke-width="1.2" />
             ${bars}
+            ${labelsMarkup}
         </svg>
+        ${legend}
     `;
+}
+
+function renderChartSvg(chartState, width, height) {
+    if (chartState.chartData?.error) {
+        return `<div class="chart-error">${escapeHtml(chartState.chartData.error)}</div>`;
+    }
+    if (chartState.chartType === 'pie') {
+        return renderPieChartSvg(chartState.chartData, width, height);
+    }
+    return renderSeriesChartSvg(chartState.chartType, chartState.chartData, width, height);
+}
+
+function getChartProcessNote(chartState) {
+    const chartData = chartState.chartData;
+    if (!chartData || chartData.error) return '';
+
+    if (chartState.chartType === 'pie') {
+        return `饼图 · ${chartData.pointCount} 个分类项`;
+    }
+
+    const modeLabel = getChartSeriesModeLabel(chartState.chartType, chartState.config?.seriesMode || CHART_SERIES_MODE_MULTI);
+    const actualSeriesLabel = chartData.seriesCount <= 1
+        ? '当前显示 1 个系列'
+        : `当前显示 ${chartData.seriesCount} 个系列`;
+    const layoutLabel = chartState.config?.dataLayout === CHART_DATA_LAYOUT_LONG ? '长表布局' : '宽表布局';
+    if (chartData.aggregated) {
+        return `${modeLabel} · ${layoutLabel} · ${actualSeriesLabel} · 已按相邻 ${chartData.aggregationGroupSize} 条平均聚合 ${chartData.originalPointCount} -> ${chartData.pointCount}`;
+    }
+    return `${modeLabel} · ${layoutLabel} · ${actualSeriesLabel} · ${chartData.pointCount} 个点`;
 }
 
 function getChartPreviewHtml(component) {
     const chartState = getChartRenderState(component);
-    const width = Math.max(component.width - 24, 160);
-    const height = Math.max(component.height - 24, 120);
     if (chartState.parsed?.error) {
         return `<div class="chart-error">${escapeHtml(chartState.parsed.error)}</div>`;
     }
-    if (chartState.chartRows?.error) {
-        return `<div class="chart-error">${escapeHtml(chartState.chartRows.error)}</div>`;
+    if (chartState.chartData?.error) {
+        return `<div class="chart-error">${escapeHtml(chartState.chartData.error)}</div>`;
     }
-    const rows = chartState.chartRows?.rows || [];
+
     const title = component.props.title || '';
+    const processNote = getChartProcessNote(chartState);
+    const showLegend = chartState.chartType === 'pie' || (chartState.chartData?.seriesCount || 0) > 1;
+    const infoBlockCount = [title, chartState.sourceNote, processNote].filter(Boolean).length;
+    const width = Math.max(component.width - 24, 160);
+    const height = Math.max(component.height - 24 - infoBlockCount * 34 - (showLegend ? 54 : 0), 120);
+
     return `
         <div class="chart-wrapper">
             ${title ? `<div class="chart-title">${escapeHtml(title)}</div>` : ''}
             ${chartState.sourceNote ? `<div class="chart-source-note">${escapeHtml(chartState.sourceNote)}</div>` : ''}
-            ${renderChartSvg(chartState.chartType, rows, width, height)}
+            ${processNote ? `<div class="chart-process-note">${escapeHtml(processNote)}</div>` : ''}
+            ${renderChartSvg(chartState, width, height)}
         </div>
     `;
 }
@@ -2450,13 +2981,25 @@ function renderImageSettings(component) {
 function renderChartSettings(component) {
     const source = normalizeSource(component.props.source);
     const chartState = getChartRenderState(component);
-    const headers = chartState.parsed?.headers || [];
+    const headers = chartState.config?.headers || [];
+    const numericHeaders = chartState.config?.numericHeaders || [];
+    const seriesOptions = chartState.config?.seriesOptions || [];
     const rowCount = Array.isArray(chartState.parsed?.records) ? chartState.parsed.records.length : 0;
+    const isPieChart = chartState.chartType === 'pie';
+    const valueColumnCandidates = numericHeaders.filter(header => header !== chartState.config?.labelColumn);
+    const selectableValueColumns = valueColumnCandidates.length ? valueColumnCandidates : numericHeaders;
+    const processNote = getChartProcessNote(chartState);
     const csvPreview = chartState.parsed?.error
         ? `<div class="chart-error">${escapeHtml(chartState.parsed.error)}</div>`
         : chartState.sourceNote
             ? `<div class="source-preview-box">${escapeHtml(chartState.sourceNote)}</div>`
             : '';
+    const usageHint = isPieChart
+        ? '饼图适合使用“标签列 + 数值列”的分类统计数据。'
+        : chartState.config?.dataLayout === CHART_DATA_LAYOUT_LONG
+            ? '长表布局适合展示不同设备 ID 在同一时间轴上的检测值变化，例如：time, device_id, value。'
+            : '宽表布局适合一行一个时间点、多列表示多个设备或多个指标的对比数据。';
+    const seriesModeOptions = getChartSeriesModeOptions(chartState.chartType);
 
     return `
         <section class="prop-section">
@@ -2466,14 +3009,14 @@ function renderChartSettings(component) {
                     <label class="prop-label" for="chartTitleInput">图表标题</label>
                     <input class="prop-input" id="chartTitleInput" type="text" value="${escapeHtml(component.props.title || '')}" placeholder="输入图表标题">
                 </div>
-                <div>
-                    <label class="prop-label" for="chartTypeInput">图表类型</label>
-                    <select class="prop-select" id="chartTypeInput">
-                        <option value="bar" ${component.props.chartType === 'bar' ? 'selected' : ''}>柱状图</option>
-                        <option value="line" ${component.props.chartType === 'line' ? 'selected' : ''}>折线图</option>
-                        <option value="pie" ${component.props.chartType === 'pie' ? 'selected' : ''}>饼图</option>
-                    </select>
-                </div>
+                ${isPieChart ? '' : `
+                    <div>
+                        <label class="prop-label" for="chartSeriesModeInput">图表模式</label>
+                        <select class="prop-select" id="chartSeriesModeInput">
+                            ${seriesModeOptions.map(item => `<option value="${item.value}" ${item.value === chartState.config?.seriesMode ? 'selected' : ''}>${item.label}</option>`).join('')}
+                        </select>
+                    </div>
+                `}
                 <div>
                     <label class="prop-label">数据来源</label>
                     <div class="source-preview-box">${source.mode === SOURCE_MODE_MANUAL ? '手动 CSV 导入' : '工作流端口绑定'}</div>
@@ -2498,21 +3041,94 @@ function renderChartSettings(component) {
                     <div>
                         <label class="prop-label" for="chartLabelColumnInput">标签列</label>
                         <select class="prop-select" id="chartLabelColumnInput">
-                            ${headers.map(header => `<option value="${escapeHtml(header)}" ${header === chartState.labelColumn ? 'selected' : ''}>${escapeHtml(header)}</option>`).join('')}
+                            ${headers.map(header => `<option value="${escapeHtml(header)}" ${header === chartState.config?.labelColumn ? 'selected' : ''}>${escapeHtml(header)}</option>`).join('')}
                         </select>
                     </div>
-                    <div>
-                        <label class="prop-label" for="chartValueColumnInput">数值列</label>
-                        <select class="prop-select" id="chartValueColumnInput">
-                            ${headers.map(header => `<option value="${escapeHtml(header)}" ${header === chartState.valueColumn ? 'selected' : ''}>${escapeHtml(header)}</option>`).join('')}
-                        </select>
-                    </div>
+                    ${isPieChart ? `
+                        <div>
+                            <label class="prop-label" for="chartValueColumnInput">数值列</label>
+                            <select class="prop-select" id="chartValueColumnInput">
+                                ${numericHeaders.map(header => `<option value="${escapeHtml(header)}" ${header === chartState.config?.valueColumn ? 'selected' : ''}>${escapeHtml(header)}</option>`).join('')}
+                            </select>
+                        </div>
+                    ` : `
+                        <div>
+                            <label class="prop-label" for="chartDataLayoutInput">数据布局</label>
+                            <select class="prop-select" id="chartDataLayoutInput">
+                                <option value="${CHART_DATA_LAYOUT_LONG}" ${chartState.config?.dataLayout === CHART_DATA_LAYOUT_LONG ? 'selected' : ''}>长表布局</option>
+                                <option value="${CHART_DATA_LAYOUT_WIDE}" ${chartState.config?.dataLayout === CHART_DATA_LAYOUT_WIDE ? 'selected' : ''}>宽表布局</option>
+                            </select>
+                        </div>
+                    `}
                 </div>
+                ${!isPieChart && chartState.config?.dataLayout === CHART_DATA_LAYOUT_LONG ? `
+                    <div class="prop-grid">
+                        <div>
+                            <label class="prop-label" for="chartSeriesColumnInput">系列列</label>
+                            <select class="prop-select" id="chartSeriesColumnInput">
+                                ${headers.map(header => `<option value="${escapeHtml(header)}" ${header === chartState.config?.seriesColumn ? 'selected' : ''}>${escapeHtml(header)}</option>`).join('')}
+                            </select>
+                        </div>
+                        <div>
+                            <label class="prop-label" for="chartValueColumnInput">数值列</label>
+                            <select class="prop-select" id="chartValueColumnInput">
+                                ${numericHeaders.map(header => `<option value="${escapeHtml(header)}" ${header === chartState.config?.valueColumn ? 'selected' : ''}>${escapeHtml(header)}</option>`).join('')}
+                            </select>
+                        </div>
+                    </div>
+                    ${seriesOptions.length ? `
+                        <div>
+                            <label class="prop-label">显示系列</label>
+                            <div class="chart-column-checklist">
+                                ${seriesOptions.map(seriesName => `
+                                    <label class="chart-column-option">
+                                        <input type="checkbox" data-chart-series-key="${escapeHtml(seriesName)}" ${chartState.config?.selectedSeriesKeys?.includes(seriesName) || (!chartState.config?.selectedSeriesKeys?.length && chartState.chartData?.series?.some(item => item.key === seriesName)) ? 'checked' : ''}>
+                                        <span>${escapeHtml(seriesName)}</span>
+                                    </label>
+                                `).join('')}
+                            </div>
+                            <p class="prop-hint">当前模式为 ${escapeHtml(getChartSeriesModeLabel(chartState.chartType, chartState.config?.seriesMode))}，勾选过多时会自动保留前面的 ${getChartSeriesModeLimit(chartState.config?.seriesMode || CHART_SERIES_MODE_MULTI) >= Number.MAX_SAFE_INTEGER ? '所有' : getChartSeriesModeLimit(chartState.config?.seriesMode || CHART_SERIES_MODE_MULTI)} 个系列。</p>
+                        </div>
+                    ` : ''}
+                ` : ''}
+                ${!isPieChart && chartState.config?.dataLayout === CHART_DATA_LAYOUT_WIDE ? `
+                    <div>
+                        <label class="prop-label">系列数值列</label>
+                        ${selectableValueColumns.length ? `
+                            <div class="chart-column-checklist">
+                                ${selectableValueColumns.map(header => `
+                                    <label class="chart-column-option">
+                                        <input type="checkbox" data-chart-value-column="${escapeHtml(header)}" ${chartState.config?.valueColumns?.includes(header) ? 'checked' : ''}>
+                                        <span>${escapeHtml(header)}</span>
+                                    </label>
+                                `).join('')}
+                            </div>
+                            <p class="prop-hint">当前模式为 ${escapeHtml(getChartSeriesModeLabel(chartState.chartType, chartState.config?.seriesMode))}，若勾选超过模式上限，将自动保留前面的系列。</p>
+                        ` : '<div class="source-preview-box">当前 CSV 中暂无可用数值列。</div>'}
+                    </div>
+                ` : ''}
+                ${!isPieChart ? `
+                    <div class="prop-grid">
+                        <div>
+                            <label class="prop-label">数据处理</label>
+                            <label class="prop-toggle">
+                                <input id="chartAggregationEnabledInput" type="checkbox" ${component.props.enableAggregation === false ? '' : 'checked'}>
+                                <span>超出容量后自动按相邻数据平均整合</span>
+                            </label>
+                        </div>
+                        <div>
+                            <label class="prop-label" for="chartAggregationLimitInput">最大显示点数</label>
+                            <input class="prop-input" id="chartAggregationLimitInput" type="number" min="${MIN_CHART_AGGREGATION_LIMIT}" max="${MAX_CHART_AGGREGATION_LIMIT}" value="${chartState.config?.aggregationLimit || DEFAULT_CHART_AGGREGATION_LIMIT}">
+                        </div>
+                    </div>
+                ` : ''}
             ` : ''}
             <p class="prop-hint">
                 ${chartState.parsed?.error
                     ? '请检查 CSV 格式是否正确。'
-                    : `已解析 ${rowCount} 行数据，可切换图表类型并指定标签列与数值列。`}
+                    : chartState.chartData?.error
+                        ? escapeHtml(chartState.chartData.error)
+                        : `已解析 ${rowCount} 行数据。${processNote ? `${escapeHtml(processNote)}。` : ''}${usageHint}`}
             </p>
         </section>
     `;
@@ -2990,11 +3606,17 @@ function bindComponentPropertyInputs(component, multiComponents = []) {
 
     if (component.type === 'chart') {
         const chartTitleInput = document.getElementById('chartTitleInput');
-        const chartTypeInput = document.getElementById('chartTypeInput');
+        const chartSeriesModeInput = document.getElementById('chartSeriesModeInput');
         const csvUploadInput = document.getElementById('chartCsvUploadInput');
         const csvTextInput = document.getElementById('chartCsvTextInput');
+        const chartDataLayoutInput = document.getElementById('chartDataLayoutInput');
+        const chartSeriesColumnInput = document.getElementById('chartSeriesColumnInput');
         const chartLabelColumnInput = document.getElementById('chartLabelColumnInput');
         const chartValueColumnInput = document.getElementById('chartValueColumnInput');
+        const chartAggregationEnabledInput = document.getElementById('chartAggregationEnabledInput');
+        const chartAggregationLimitInput = document.getElementById('chartAggregationLimitInput');
+        const chartValueColumnChecks = Array.from(document.querySelectorAll('[data-chart-value-column]'));
+        const chartSeriesKeyChecks = Array.from(document.querySelectorAll('[data-chart-series-key]'));
 
         if (chartTitleInput) {
             chartTitleInput.addEventListener('input', () => {
@@ -3002,9 +3624,14 @@ function bindComponentPropertyInputs(component, multiComponents = []) {
                 renderStage();
             });
         }
-        if (chartTypeInput) {
-            chartTypeInput.addEventListener('change', () => {
-                component.props.chartType = chartTypeInput.value;
+        if (chartSeriesModeInput) {
+            chartSeriesModeInput.addEventListener('change', () => {
+                const nextMode = chartSeriesModeInput.value === CHART_SERIES_MODE_SINGLE || chartSeriesModeInput.value === CHART_SERIES_MODE_DOUBLE
+                    ? chartSeriesModeInput.value
+                    : CHART_SERIES_MODE_MULTI;
+                updateChartProps(component, {
+                    seriesMode: nextMode
+                });
                 renderAll();
             });
         }
@@ -3012,29 +3639,106 @@ function bindComponentPropertyInputs(component, multiComponents = []) {
             csvUploadInput.addEventListener('change', async () => {
                 const [file] = csvUploadInput.files || [];
                 if (!file) return;
-                component.props.csvText = await readFileAsText(file);
-                component.props.labelColumn = '';
-                component.props.valueColumn = '';
+                updateChartProps(component, {
+                    csvText: await readFileAsText(file),
+                    labelColumn: '',
+                    valueColumn: '',
+                    valueColumns: [],
+                    seriesColumn: '',
+                    selectedSeriesKeys: []
+                });
                 renderAll();
             });
         }
         if (csvTextInput) {
             csvTextInput.addEventListener('input', () => {
-                component.props.csvText = csvTextInput.value;
-                component.props.labelColumn = '';
-                component.props.valueColumn = '';
+                updateChartProps(component, {
+                    csvText: csvTextInput.value,
+                    labelColumn: '',
+                    valueColumn: '',
+                    valueColumns: [],
+                    seriesColumn: '',
+                    selectedSeriesKeys: []
+                });
+                renderAll();
+            });
+        }
+        if (chartDataLayoutInput) {
+            chartDataLayoutInput.addEventListener('change', () => {
+                updateChartProps(component, {
+                    dataLayout: chartDataLayoutInput.value === CHART_DATA_LAYOUT_WIDE
+                        ? CHART_DATA_LAYOUT_WIDE
+                        : CHART_DATA_LAYOUT_LONG
+                });
+                renderAll();
+            });
+        }
+        if (chartSeriesColumnInput) {
+            chartSeriesColumnInput.addEventListener('change', () => {
+                updateChartProps(component, {
+                    seriesColumn: chartSeriesColumnInput.value,
+                    selectedSeriesKeys: []
+                });
                 renderAll();
             });
         }
         if (chartLabelColumnInput) {
             chartLabelColumnInput.addEventListener('change', () => {
-                component.props.labelColumn = chartLabelColumnInput.value;
+                updateChartProps(component, {
+                    labelColumn: chartLabelColumnInput.value
+                });
                 renderAll();
             });
         }
         if (chartValueColumnInput) {
             chartValueColumnInput.addEventListener('change', () => {
-                component.props.valueColumn = chartValueColumnInput.value;
+                updateChartProps(component, {
+                    valueColumn: chartValueColumnInput.value
+                });
+                renderAll();
+            });
+        }
+        if (chartValueColumnChecks.length) {
+            chartValueColumnChecks.forEach(input => {
+                input.addEventListener('change', () => {
+                    const nextValueColumns = applyChartSeriesMode(chartValueColumnChecks
+                        .filter(item => item.checked)
+                        .map(item => String(item.getAttribute('data-chart-value-column') || '').trim())
+                        .filter(Boolean), component.props.seriesMode || CHART_SERIES_MODE_MULTI);
+                    updateChartProps(component, {
+                        valueColumns: nextValueColumns
+                    });
+                    renderAll();
+                });
+            });
+        }
+        if (chartSeriesKeyChecks.length) {
+            chartSeriesKeyChecks.forEach(input => {
+                input.addEventListener('change', () => {
+                    const nextSeriesKeys = applyChartSeriesMode(chartSeriesKeyChecks
+                        .filter(item => item.checked)
+                        .map(item => String(item.getAttribute('data-chart-series-key') || '').trim())
+                        .filter(Boolean), component.props.seriesMode || CHART_SERIES_MODE_MULTI);
+                    updateChartProps(component, {
+                        selectedSeriesKeys: nextSeriesKeys
+                    });
+                    renderAll();
+                });
+            });
+        }
+        if (chartAggregationEnabledInput) {
+            chartAggregationEnabledInput.addEventListener('change', () => {
+                updateChartProps(component, {
+                    enableAggregation: chartAggregationEnabledInput.checked
+                });
+                renderAll();
+            });
+        }
+        if (chartAggregationLimitInput) {
+            chartAggregationLimitInput.addEventListener('input', () => {
+                updateChartProps(component, {
+                    aggregationLimit: chartAggregationLimitInput.value
+                });
                 renderAll();
             });
         }
@@ -3850,11 +4554,29 @@ function buildPreviewHtml() {
             flex-direction: column;
             gap: 8px;
         }
+        .chart-title {
+            font-size: 16px;
+            font-weight: 800;
+            color: #1a202c;
+            text-align: center;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
         .chart-source-note {
             align-self: flex-start;
             padding: 6px 10px;
             border-radius: 999px;
             background: rgba(36, 90, 115, 0.10);
+            color: #245a73;
+            font-size: 11px;
+            font-weight: 700;
+        }
+        .chart-process-note {
+            align-self: flex-start;
+            padding: 6px 10px;
+            border-radius: 999px;
+            background: rgba(47, 128, 237, 0.10);
             color: #245a73;
             font-size: 11px;
             font-weight: 700;
@@ -4353,7 +5075,18 @@ function seedDemoProject() {
     const chart = createChartComponent(520, 320);
     chart.width = 850;
     chart.height = 180;
-    chart.props.csvText = '指标,数值\n温度,24.6\n湿度,68\n光照,18500\n土壤湿度,45';
+    chart.props.csvText = [
+        'time,device_id,value',
+        '08:00,A-01,24.6',
+        '08:00,B-02,25.1',
+        '09:00,A-01,24.9',
+        '09:00,B-02,25.6',
+        '10:00,A-01,25.2',
+        '10:00,B-02,26.0',
+        '11:00,A-01,25.4',
+        '11:00,B-02,26.3'
+    ].join('\n');
+    chart.props.dataLayout = CHART_DATA_LAYOUT_LONG;
 
     state.components.set(title.id, title);
     state.components.set(subtitle.id, subtitle);
