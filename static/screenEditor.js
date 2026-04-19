@@ -909,7 +909,8 @@ function usesWorkflowSource(type) {
 }
 
 function getSupportedPortTypes(componentType) {
-    if (componentType === 'image' || isAgriInsightComponentType(componentType)) return ['string'];
+    if (componentType === 'image') return ['string'];
+    if (isAgriInsightComponentType(componentType)) return ['string', 'csv'];
     if (componentType === 'chart') return ['string', 'csv'];
     return ['string', 'int'];
 }
@@ -920,17 +921,64 @@ function getPortTypeLabel(dataType) {
     return '字符串';
 }
 
+function normalizeWorkflowDataType(dataType) {
+    return dataType === 'int' ? 'int' : (dataType === 'csv' ? 'csv' : 'string');
+}
+
+function buildWorkflowVariableMapFromList(variables) {
+    const variableMap = new Map();
+    (Array.isArray(variables) ? variables : []).forEach((variable, index) => {
+        const variableId = String(variable?.id || `workflow-variable-${index}`);
+        if (!variableId) return;
+        const dataType = normalizeWorkflowDataType(variable?.dataType);
+        variableMap.set(variableId, {
+            id: variableId,
+            name: String(variable?.name || variableId),
+            dataType,
+            defaultValue: dataType === 'int'
+                ? (Number.isFinite(Number(variable?.defaultValue)) ? Number(variable.defaultValue) : 0)
+                : String(variable?.defaultValue ?? '')
+        });
+    });
+    return variableMap;
+}
+
+function deriveWorkflowPortDataType(port, nodesById, variableMap) {
+    const node = nodesById.get(Number(port?.nodeId));
+    if (node?.type === 'output' && String(port?.field || '') === 'outputValue') {
+        const variable = variableMap.get(String(node?.properties?.variableId || ''));
+        if (variable) return variable.dataType;
+    }
+    return normalizeWorkflowDataType(port?.dataType);
+}
+
+function normalizeWorkflowProjectPort(port, index, nodesById, variableMap) {
+    return {
+        id: String(port?.id || `workflow-port-${index}`),
+        name: String(port?.name || `端口${index + 1}`),
+        dataType: deriveWorkflowPortDataType(port, nodesById, variableMap),
+        nodeId: Number.isFinite(Number(port?.nodeId)) ? Number(port.nodeId) : null,
+        field: typeof port?.field === 'string' ? port.field : ''
+    };
+}
+
 function getWorkflowPortsForProject(projectId) {
     const project = getProjectById(projectId);
     if (!project || project.type !== 'workflow') return [];
+    const nodes = Array.isArray(project.data?.nodes) ? project.data.nodes : [];
+    const variables = Array.isArray(project.data?.workflow_variables) ? project.data.workflow_variables : [];
+    const ports = Array.isArray(project.data?.workflow_ports) ? project.data.workflow_ports : [];
+    const nodesById = new Map(nodes.map(node => [Number(node?.id), node]));
+    const variableMap = buildWorkflowVariableMapFromList(variables);
 
-    return Array.isArray(project.data?.workflow_ports)
-        ? project.data.workflow_ports.map((port, index) => ({
-            id: String(port?.id || `workflow-port-${index}`),
-            name: String(port?.name || `端口${index + 1}`),
-            dataType: port?.dataType === 'int' ? 'int' : (port?.dataType === 'csv' ? 'csv' : 'string')
-        }))
-        : [];
+    return ports.map((port, index) => {
+        const normalized = normalizeWorkflowProjectPort(port, index, nodesById, variableMap);
+        return {
+            id: normalized.id,
+            name: normalized.name,
+            dataType: normalized.dataType
+        };
+    });
 }
 
 function getWorkflowProjectRuntimeContext(projectId) {
@@ -941,25 +989,14 @@ function getWorkflowProjectRuntimeContext(projectId) {
     const variables = Array.isArray(project.data?.workflow_variables) ? project.data.workflow_variables : [];
     const ports = Array.isArray(project.data?.workflow_ports) ? project.data.workflow_ports : [];
 
-    const variableMap = new Map();
-    for (const variable of variables) {
-        const variableId = String(variable?.id || '');
-        if (!variableId) continue;
-        const dataType = variable?.dataType === 'int' ? 'int' : (variable?.dataType === 'csv' ? 'csv' : 'string');
-        variableMap.set(variableId, {
-            id: variableId,
-            name: String(variable?.name || variableId),
-            dataType,
-            defaultValue: dataType === 'int'
-                ? (Number.isFinite(Number(variable?.defaultValue)) ? Number(variable.defaultValue) : 0)
-                : String(variable?.defaultValue ?? '')
-        });
-    }
+    const nodesById = new Map(nodes.map(node => [Number(node?.id), node]));
+    const variableMap = buildWorkflowVariableMapFromList(variables);
+    const normalizedPorts = ports.map((port, index) => normalizeWorkflowProjectPort(port, index, nodesById, variableMap));
 
     return {
         project,
-        nodesById: new Map(nodes.map(node => [Number(node?.id), node])),
-        ports,
+        nodesById,
+        ports: normalizedPorts,
         variableMap
     };
 }
@@ -1130,7 +1167,7 @@ function getSourceStatusText(component) {
             return `${typeHint}${runtimeHint} 运行生成网页时会把该端口值视为 CSV 文本，用于绘制图表。`;
         }
         if (isAgriInsightComponentType(component.type)) {
-            return `${typeHint}${runtimeHint} 该组件会把字符串端口值解析为农业模型 JSON，并按模型概览、气候预测、产量预测或辅助决策视图进行渲染。`;
+            return `${typeHint}${runtimeHint} 该组件会把文本端口值解析为农业模型 JSON，并按模型概览、气候预测、产量预测或辅助决策视图进行渲染。`;
         }
         return `${typeHint}${runtimeHint} 文本组件支持字符串与整型端口。`;
     }
@@ -1262,6 +1299,213 @@ function parseCsvText(text) {
     }
 
     return { headers, records };
+}
+
+function csvEscapeCell(value) {
+    const text = value == null ? '' : String(value);
+    return /[",\r\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
+}
+
+function rowsToCsvText(rows) {
+    if (!Array.isArray(rows) || !rows.length) return '';
+    const headerSet = new Set();
+    rows.forEach(row => {
+        if (row && typeof row === 'object' && !Array.isArray(row)) {
+            Object.keys(row).forEach(key => headerSet.add(String(key)));
+        }
+    });
+    const headers = Array.from(headerSet);
+    if (!headers.length) return '';
+    const lines = [
+        headers.map(csvEscapeCell).join(','),
+        ...rows.map(row => headers.map(header => csvEscapeCell(row?.[header])).join(','))
+    ];
+    return lines.join('\n');
+}
+
+function objectToCsvText(record) {
+    if (!record || typeof record !== 'object' || Array.isArray(record)) return '';
+    const headers = Object.keys(record);
+    if (!headers.length) return '';
+    return [
+        headers.map(csvEscapeCell).join(','),
+        headers.map(header => csvEscapeCell(record[header])).join(',')
+    ].join('\n');
+}
+
+function tryParseJsonValue(value) {
+    if (typeof value !== 'string') return { ok: false, value: null };
+    const trimmed = value.trim();
+    if (!trimmed) return { ok: false, value: null };
+    if (!(trimmed.startsWith('{') || trimmed.startsWith('['))) return { ok: false, value: null };
+    try {
+        return { ok: true, value: JSON.parse(trimmed) };
+    } catch (error) {
+        return { ok: false, value: null };
+    }
+}
+
+function extractCsvFromStructuredValue(rawValue, chartType = 'bar') {
+    const parsedValue = typeof rawValue === 'string' ? tryParseJsonValue(rawValue) : { ok: false, value: null };
+    const value = parsedValue.ok ? parsedValue.value : rawValue;
+    const payload = unwrapStructuredPayload(value);
+    const datasets = payload?.screen_contract?.datasets || payload?.datasets || null;
+
+    const preferredCsvCandidates = chartType === 'line'
+        ? [
+            datasets?.timeline_csv,
+            datasets?.dimensions_csv,
+            payload?.timeline_csv,
+            payload?.dimensions_csv,
+            payload?.csvText,
+            payload?.csv
+        ]
+        : [
+            datasets?.dimensions_csv,
+            datasets?.timeline_csv,
+            payload?.dimensions_csv,
+            payload?.timeline_csv,
+            payload?.csvText,
+            payload?.csv
+        ];
+
+    const directCsv = preferredCsvCandidates.find(candidate => typeof candidate === 'string' && !parseCsvText(candidate).error);
+    if (directCsv) return directCsv;
+
+    const preferredRowCandidates = chartType === 'line'
+        ? [
+            datasets?.timeline,
+            datasets?.dimensions,
+            payload?.timeline,
+            payload?.rows,
+            payload?.records,
+            payload?.data
+        ]
+        : [
+            datasets?.dimensions,
+            datasets?.timeline,
+            payload?.dimensions,
+            payload?.rows,
+            payload?.records,
+            payload?.data
+        ];
+
+    const rowCandidate = preferredRowCandidates.find(candidate => Array.isArray(candidate) && candidate.length);
+    if (Array.isArray(rowCandidate)) {
+        const csvText = rowsToCsvText(rowCandidate);
+        if (csvText && !parseCsvText(csvText).error) return csvText;
+    }
+
+    if (Array.isArray(payload) && payload.length) {
+        const csvText = rowsToCsvText(payload);
+        if (csvText && !parseCsvText(csvText).error) return csvText;
+    }
+
+    if (payload && typeof payload === 'object' && !Array.isArray(payload)) {
+        const csvText = objectToCsvText(payload);
+        if (csvText && !parseCsvText(csvText).error) return csvText;
+    }
+
+    return '';
+}
+
+function extractCsvFromPlainText(rawValue) {
+    if (typeof rawValue !== 'string') return '';
+    const lines = rawValue
+        .split(/\r?\n/)
+        .map(line => line.trim())
+        .filter(Boolean);
+    if (lines.length < 2) return '';
+
+    const rows = [];
+    lines.forEach(line => {
+        const match = line.match(/^(.+?)[,:：=，\s]+(-?\d+(?:\.\d+)?)(?:\s*[%A-Za-z°/亩kgKGluxLUX]*)?$/);
+        if (!match) return;
+        rows.push({
+            标签: match[1].trim(),
+            值: Number(match[2])
+        });
+    });
+
+    if (rows.length < 2) return '';
+    return rowsToCsvText(rows);
+}
+
+function resolveChartWorkflowCsvText(rawValue, chartType = 'bar') {
+    if (rawValue == null) return '';
+    if (typeof rawValue === 'string') {
+        const directText = rawValue.trim();
+        if (directText && !parseCsvText(directText).error) return rawValue;
+        const extracted = extractCsvFromStructuredValue(rawValue, chartType);
+        if (extracted) return extracted;
+        const plainTextCsv = extractCsvFromPlainText(rawValue);
+        return plainTextCsv || rawValue;
+    }
+    return extractCsvFromStructuredValue(rawValue, chartType) || String(rawValue);
+}
+
+function buildTextPayloadForAgriComponent(componentType, text, title = '') {
+    const safeTitle = String(title || '').trim();
+    const safeText = String(text || '').trim();
+    if (!safeText) return null;
+
+    if (componentType === 'agri-model') {
+        return {
+            model_name: safeTitle || '农业环境抽象模型',
+            screen_contract: {
+                overview: {
+                    title: safeTitle || '农业环境抽象模型',
+                    summary: safeText,
+                    climate_archetype: '文本摘要',
+                    dimension_bars: []
+                }
+            }
+        };
+    }
+
+    if (componentType === 'agri-climate') {
+        return {
+            screen_contract: {
+                climate_forecast: {
+                    title: safeTitle || '气候趋势预测',
+                    microclimate_state: '文本输入',
+                    weather_summary: safeText,
+                    cards: []
+                }
+            }
+        };
+    }
+
+    if (componentType === 'agri-yield') {
+        return {
+            screen_contract: {
+                yield_forecast: {
+                    title: safeTitle || '产量预测',
+                    yield_grade: '文本输入',
+                    narrative: safeText,
+                    factor_bars: []
+                }
+            }
+        };
+    }
+
+    if (componentType === 'agri-decision') {
+        return {
+            screen_contract: {
+                decision_support: {
+                    title: safeTitle || '辅助决策',
+                    decision_summary: safeText,
+                    top_decision: {
+                        action: safeText,
+                        reason: '该内容来自文本工作流端口'
+                    },
+                    modules: []
+                }
+            }
+        };
+    }
+
+    return null;
 }
 
 function getNumericChartHeaders(parsed) {
@@ -1590,17 +1834,23 @@ function getChartRenderState(component) {
     const binding = resolveWorkflowBinding(component);
     let csvText = component.props.csvText || '';
     let sourceNote = '';
+    const chartType = component.props.chartType === 'line' || component.props.chartType === 'pie'
+        ? component.props.chartType
+        : 'bar';
 
     if (binding.valid) {
         if (binding.runtimeValue?.ok && String(binding.runtimeValue.value ?? '').trim()) {
-            csvText = String(binding.runtimeValue.value);
-            sourceNote = `${binding.label} · ${getPortTypeLabel(binding.port.dataType)}`;
+            csvText = resolveChartWorkflowCsvText(binding.runtimeValue.value, chartType);
+            const extractedFromStructured = typeof binding.runtimeValue.value !== 'string'
+                || parseCsvText(String(binding.runtimeValue.value ?? '')).error;
+            sourceNote = `${binding.label} · ${getPortTypeLabel(binding.port.dataType)}${extractedFromStructured && !parseCsvText(csvText).error ? ' · 已自动提取图表数据' : ''}`;
         } else {
             return {
-                chartType: component.props.chartType || 'bar',
+                chartType,
                 csvText: '',
                 parsed: { error: '当前工作流端口无可用 CSV 数据。' },
                 sourceNote,
+                binding,
                 config: resolveChartConfig({ headers: [], records: [] }, component)
             };
         }
@@ -1608,11 +1858,15 @@ function getChartRenderState(component) {
 
     const parsed = parseCsvText(csvText);
     if (parsed.error) {
+        const fallbackError = binding?.valid && binding.runtimeValue?.source !== 'runtime'
+            ? '当前工作流端口返回的是普通文本说明，尚未形成可绘图的表格数据。请先运行工作流，或让端口输出 CSV / 可转换的数值文本。'
+            : parsed.error;
         return {
-            chartType: component.props.chartType || 'bar',
+            chartType,
             csvText,
-            parsed,
+            parsed: { error: fallbackError },
             sourceNote,
+            binding,
             config: resolveChartConfig({ headers: [], records: [] }, component)
         };
     }
@@ -1625,6 +1879,7 @@ function getChartRenderState(component) {
         parsed,
         config,
         chartData,
+        binding,
         sourceNote
     };
 }
@@ -1918,7 +2173,7 @@ function getStructuredAgriRenderState(component) {
         }
     } else if (binding.mode === SOURCE_MODE_WORKFLOW_PORT) {
         return {
-            error: '请选择一个有效的字符串工作流端口。',
+            error: '请选择一个有效的文本工作流端口。',
             sourceNote: '',
             payload: null
         };
@@ -1926,6 +2181,14 @@ function getStructuredAgriRenderState(component) {
 
     const parsed = parseStructuredJson(jsonText);
     if (!parsed.ok) {
+        const textPayload = buildTextPayloadForAgriComponent(component?.type, jsonText, component?.props?.title);
+        if (textPayload) {
+            return {
+                payload: textPayload,
+                sourceNote: sourceNote ? `${sourceNote} · 已按文本摘要渲染` : '已按文本摘要渲染',
+                error: ''
+            };
+        }
         return {
             error: `JSON 解析失败：${parsed.error}`,
             sourceNote,
