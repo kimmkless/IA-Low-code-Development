@@ -115,6 +115,26 @@ function syncWorkflowPortTypesFromNodes() {
     setWorkflowPorts(nextPorts);
 }
 
+function bindWheelScroll(container) {
+    if (!container) return;
+    container.addEventListener('wheel', (event) => {
+        if (container.scrollHeight <= container.clientHeight) return;
+
+        const deltaY = Number(event.deltaY) || 0;
+        if (!deltaY) return;
+
+        const isScrollingUp = deltaY < 0;
+        const isScrollingDown = deltaY > 0;
+        const atTop = container.scrollTop <= 0;
+        const atBottom = Math.ceil(container.scrollTop + container.clientHeight) >= container.scrollHeight;
+
+        if ((isScrollingUp && atTop) || (isScrollingDown && atBottom)) return;
+
+        event.preventDefault();
+        container.scrollTop += deltaY;
+    }, { passive: false });
+}
+
 function renderWorkflowPortsEditor(modalBody, draftPorts) {
     modalBody.innerHTML = `
         <div class="port-editor-toolbar">
@@ -209,6 +229,8 @@ function renderWorkflowPortsEditor(modalBody, draftPorts) {
             renderWorkflowPortsEditor(modalBody, draftPorts);
         });
     }
+
+    bindWheelScroll(modalBody.querySelector('.port-editor-list'));
 }
 
 function validateWorkflowPorts(draftPorts) {
@@ -358,6 +380,8 @@ function renderWorkflowVariablesEditor(modalBody, draftVariables) {
             renderWorkflowVariablesEditor(modalBody, draftVariables);
         });
     }
+
+    bindWheelScroll(modalBody.querySelector('.port-editor-list'));
 }
 
 function validateWorkflowVariables(draftVariables) {

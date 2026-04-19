@@ -19,14 +19,18 @@ body {
     display: flex;
     align-items: center;
     justify-content: center;
+    padding: 20px;
     z-index: 1000;
 }
 .modal {
     width: min(520px, 92vw);
+    max-height: calc(100vh - 40px);
     background: #fff;
     border-radius: 12px;
     box-shadow: 0 20px 60px rgba(0,0,0,0.35);
     overflow: hidden;
+    display: flex;
+    flex-direction: column;
 }
 .modal-header {
     display: flex;
@@ -52,6 +56,9 @@ body {
     padding: 14px;
     font-size: 13px;
     color: #2c3e50;
+    flex: 1;
+    min-height: 0;
+    overflow: auto;
 }
 .modal-footer {
     display: flex;
@@ -912,6 +919,11 @@ body {
     display: flex;
     flex-direction: column;
     gap: 12px;
+    max-height: min(58vh, 620px);
+    overflow: auto;
+    padding-right: 4px;
+    overscroll-behavior: contain;
+    scrollbar-gutter: stable;
 }
 
 .port-editor-item,
@@ -940,6 +952,20 @@ body {
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 10px;
+}
+
+@media (max-width: 640px) {
+    .modal-mask {
+        padding: 12px;
+    }
+
+    .modal {
+        max-height: calc(100vh - 24px);
+    }
+
+    .port-editor-grid {
+        grid-template-columns: 1fr;
+    }
 }
 
 .project-picker-btn {
