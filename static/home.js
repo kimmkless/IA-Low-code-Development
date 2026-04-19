@@ -1,4 +1,10 @@
-import { ensureDemoProjects, listProjectsByType, listRecentProjects } from './projectRepository.js';
+import {
+    DEMO_PROJECT_IDS,
+    ensureDemoProjects,
+    getProjectById,
+    listProjectsByType,
+    listRecentProjects
+} from './projectRepository.js';
 import { attachAuthControls } from './authService.js';
 
 const IMPORT_STORAGE_KEY = 'ia-editor-import-payload';
@@ -47,7 +53,8 @@ function normalizeProjectData(rawData, projectType) {
     return {
         nodes: rawData.nodes,
         next_id: Number.isFinite(Number(rawData.next_id)) ? Number(rawData.next_id) : 100,
-        workflow_ports: Array.isArray(rawData.workflow_ports) ? rawData.workflow_ports : []
+        workflow_ports: Array.isArray(rawData.workflow_ports) ? rawData.workflow_ports : [],
+        workflow_variables: Array.isArray(rawData.workflow_variables) ? rawData.workflow_variables : []
     };
 }
 
@@ -73,6 +80,12 @@ function buildEditorUrl(projectType, query = {}) {
 function openProjectRecord(project) {
     if (!project?.id || !project?.type) return;
     window.location.href = buildEditorUrl(project.type, { projectId: project.id });
+}
+
+function openDemoProject(projectType) {
+    const projectId = DEMO_PROJECT_IDS[projectType];
+    const project = getProjectById(projectId);
+    if (project) openProjectRecord(project);
 }
 
 function goToEditor(projectType, entryType = 'create') {
@@ -116,7 +129,7 @@ async function importProject(projectType) {
 function renderRecentProjects() {
     const projects = listRecentProjects(8);
     if (!projects.length) {
-        refs.recentList.innerHTML = '<div class="recent-empty">最近还没有项目记录。保存或编辑过工作流项目后，这里会按时间倒序展示。</div>';
+        refs.recentList.innerHTML = '<div class="recent-empty">还没有项目记录。创建、导入或打开演示工程后，这里会按最近使用时间展示。</div>';
         return;
     }
 
@@ -151,34 +164,37 @@ function openHomeModal({ projectType, bodyHtml, title }) {
 function renderProjectActionModal(projectType) {
     const projectLabel = getProjectTypeLabel(projectType);
     const savedProjects = listProjectsByType(projectType);
-
-    const bodyHtml = `
-        <div class="modal-section-title">项目操作</div>
-        <button class="modal-action-item" type="button" data-modal-action="create" data-project="${projectType}">
-            <strong>创建${projectLabel}</strong>
-            <span>进入新的${projectLabel}编辑界面。</span>
-        </button>
-        <button class="modal-action-item" type="button" data-modal-action="open" data-project="${projectType}">
-            <strong>打开${projectLabel}</strong>
-            <span>查看本地已保存项目并直接进入编辑器。</span>
-        </button>
-        <button class="modal-action-item" type="button" data-modal-action="import" data-project="${projectType}">
-            <strong>导入${projectLabel}</strong>
-            <span>从本地 JSON 文件导入后继续编辑。</span>
-        </button>
-        <div class="modal-section-title">本地项目</div>
-        ${savedProjects.length ? savedProjects.slice(0, 8).map(project => `
-            <button class="modal-project-item" type="button" data-modal-project-id="${project.id}">
-                <strong>${project.name}</strong>
-                <span>最近活动 ${formatTimeLabel(project.lastOpenedAt || project.updatedAt)}</span>
-            </button>
-        `).join('') : `<div class="modal-empty">当前还没有保存过${projectLabel}项目。</div>`}
-    `;
+    const demoLabel = projectType === 'screen' ? '演示大屏' : '演示工作流';
 
     openHomeModal({
         projectType,
         title: `${projectLabel}入口`,
-        bodyHtml
+        bodyHtml: `
+            <div class="modal-section-title">快捷操作</div>
+            <button class="modal-action-item demo" type="button" data-modal-action="open-demo" data-project="${projectType}">
+                <strong>打开${demoLabel}</strong>
+                <span>直接进入系统内置 demo，适合答辩、汇报和功能联调。</span>
+            </button>
+            <button class="modal-action-item" type="button" data-modal-action="create" data-project="${projectType}">
+                <strong>创建${projectLabel}</strong>
+                <span>进入新的${projectLabel}编辑界面。</span>
+            </button>
+            <button class="modal-action-item" type="button" data-modal-action="open" data-project="${projectType}">
+                <strong>打开${projectLabel}</strong>
+                <span>查看本地已保存项目并直接进入编辑器。</span>
+            </button>
+            <button class="modal-action-item" type="button" data-modal-action="import" data-project="${projectType}">
+                <strong>导入${projectLabel}</strong>
+                <span>从本地 JSON 文件导入后继续编辑。</span>
+            </button>
+            <div class="modal-section-title">本地项目</div>
+            ${savedProjects.length ? savedProjects.slice(0, 8).map(project => `
+                <button class="modal-project-item" type="button" data-modal-project-id="${project.id}">
+                    <strong>${project.name}</strong>
+                    <span>最近活动 ${formatTimeLabel(project.lastOpenedAt || project.updatedAt)}</span>
+                </button>
+            `).join('') : `<div class="modal-empty">当前还没有保存过${projectLabel}项目。</div>`}
+        `
     });
 
     const openProjectListModal = () => {
@@ -209,6 +225,11 @@ function renderProjectActionModal(projectType) {
     refs.modalBody.querySelectorAll('[data-modal-action]').forEach(button => {
         button.addEventListener('click', () => {
             const action = button.getAttribute('data-modal-action');
+            if (action === 'open-demo') {
+                closeHomeModal();
+                openDemoProject(projectType);
+                return;
+            }
             if (action === 'create') {
                 closeHomeModal();
                 goToEditor(projectType, 'create');
@@ -243,6 +264,13 @@ function bindHomeActions() {
         });
     });
 
+    document.querySelectorAll('[data-open-demo]').forEach(button => {
+        button.addEventListener('click', () => {
+            const projectType = button.getAttribute('data-open-demo') || 'workflow';
+            openDemoProject(projectType);
+        });
+    });
+
     refs.refreshBtn.addEventListener('click', renderRecentProjects);
     refs.modalCloseBtn.addEventListener('click', closeHomeModal);
     refs.modalMask.addEventListener('click', (event) => {
@@ -256,7 +284,7 @@ attachAuthControls(document.getElementById('homeAccountControls'), {
     loginText: '登录',
     logoutText: '退出',
     buttonVariant: 'secondary',
-    formatUserLabel: (user) => `当前用户：${user.display_name || user.username}`,
+    formatUserLabel: (user) => `当前用户：${user.display_name || user.username}`
 });
 bindHomeActions();
 renderRecentProjects();

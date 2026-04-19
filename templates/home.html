@@ -14,53 +14,99 @@
             <div class="panel-badge">Low-Code Studio</div>
             <div class="shared-auth-controls" id="homeAccountControls"></div>
         </div>
-        <h1>低代码开发平台</h1>
-        <p class="panel-lead">点击左侧入口后弹出项目操作窗口，可选择创建、打开或导入对应项目。</p>
+        <h1>智慧农业低代码分析与展示平台</h1>
+        <p class="panel-lead">
+            一个入口统一串联工作流编排与大屏应用，既能做完整功能演示，也方便继续扩展真实项目。
+            你可以从下方直接打开演示工程，或者进入任一编辑器创建、导入和管理自己的项目。
+        </p>
 
         <div class="entry-list">
             <button class="entry-btn workflow" type="button" data-entry-project="workflow">
                 <span class="entry-tag">Workflow</span>
                 <strong>智能工作流</strong>
-                <em>创建、打开和导入工作流项目</em>
+                <em>拖拽节点、运行流程、调试执行链路，并把结果通过项目端口输出给大屏应用。</em>
             </button>
 
             <button class="entry-btn screen" type="button" data-entry-project="screen">
                 <span class="entry-tag">Screen</span>
                 <strong>大屏应用</strong>
-                <em>创建、打开和导入大屏应用项目</em>
+                <em>可视化编排文本、图片、图表、天气与农业模型组件，快速形成演示和汇报页面。</em>
             </button>
         </div>
+
+        <section class="demo-quickstart">
+            <div class="demo-quickstart-head">
+                <div>
+                    <p class="intro-tag">Demo</p>
+                    <h2>一键进入系统演示</h2>
+                </div>
+                <div class="demo-highlight-pill">工作流 + 大屏联动</div>
+            </div>
+
+            <div class="demo-actions">
+                <button class="demo-action-btn workflow" type="button" data-open-demo="workflow">
+                    <strong>打开演示工作流</strong>
+                    <span>查看完整节点链路，直接运行并输出多种端口数据。</span>
+                </button>
+                <button class="demo-action-btn screen" type="button" data-open-demo="screen">
+                    <strong>打开演示大屏</strong>
+                    <span>查看项目亮点、图表、抓拍、模型、气候、产量和决策的完整展示页面。</span>
+                </button>
+            </div>
+
+            <div class="demo-steps">
+                <div class="demo-step">
+                    <span>01</span>
+                    <strong>先打开演示工作流并点击运行</strong>
+                    <p>系统会自动完成数据读取、SQL 查询、分析摘要、抽象建模和端口输出。</p>
+                </div>
+                <div class="demo-step">
+                    <span>02</span>
+                    <strong>再打开演示大屏查看联动效果</strong>
+                    <p>文本、图片、图表与农业专用组件都会读取工作流输出，并支持运行生成网页。</p>
+                </div>
+                <div class="demo-step">
+                    <span>03</span>
+                    <strong>演示后可直接在此基础上改造</strong>
+                    <p>无需重新搭结构，保留 demo 即可继续扩展成自己的业务场景和答辩版本。</p>
+                </div>
+            </div>
+        </section>
     </section>
 
     <aside class="landing-side">
         <section class="landing-card intro-panel">
-            <p class="intro-tag">项目介绍</p>
-            <h2>统一承接工作流与大屏应用的低代码门户</h2>
+            <p class="intro-tag">项目亮点</p>
+            <h2>把数据采集、分析建模、低代码编排与大屏展示打通成一套完整闭环</h2>
             <p>
-                当前项目已经完成工作流开发的基础后端能力，并逐步补齐前端可视化入口。
-                主页现在负责统一项目进入方式，并在下方展示最近打开、编辑或保存过的项目。
+                平台以智慧农业为核心场景，围绕传感器接入、数据库查询、农业分析、抽象模型和辅助决策，
+                提供一套面向演示、答辩与后续开发都足够顺手的低代码工作台。
             </p>
 
             <div class="intro-grid">
                 <div class="intro-block">
-                    <span>智能工作流</span>
-                    <strong>节点拖拽、流程执行、调试与项目端口配置</strong>
+                    <span>完整工作流</span>
+                    <strong>开始、打印、顺序、循环、分支、传感器读取、SQL、分析摘要、抽象模型、输出端口一应俱全。</strong>
                 </div>
                 <div class="intro-block">
-                    <span>本地项目仓库</span>
-                    <strong>先本地保存，后续可平滑切换到上游服务器数据库</strong>
+                    <span>完整大屏</span>
+                    <strong>文本、图片、柱状图、折线图、饼图、天气卡与农业专用模型卡、预测卡、决策卡全部可演示。</strong>
                 </div>
                 <div class="intro-block">
-                    <span>统一入口</span>
-                    <strong>通过弹窗选择创建、打开、导入，而不是直接分散跳转</strong>
+                    <span>演示兜底</span>
+                    <strong>即使现场没有真实设备，也能自动使用默认 demo 数据稳定展示，不会出现空白页。</strong>
                 </div>
                 <div class="intro-block">
-                    <span>最近项目</span>
-                    <strong>按时间倒序展示，点击即可重新打开</strong>
+                    <span>项目仓库</span>
+                    <strong>本地项目、数据库项目、导入导出与最近项目入口统一管理，便于持续迭代。</strong>
                 </div>
                 <div class="intro-block">
-                    <span>演示工程</span>
-                    <strong>应用打开时自动生成智慧农业演示工作流和演示大屏项目</strong>
+                    <span>适合汇报</span>
+                    <strong>首页直接提供演示入口和演示步骤，评审或老师打开后能按最短路径看到完整亮点。</strong>
+                </div>
+                <div class="intro-block">
+                    <span>可继续扩展</span>
+                    <strong>演示工程不是一次性页面，而是可运行、可编辑、可继续加工的真实项目骨架。</strong>
                 </div>
             </div>
         </section>
