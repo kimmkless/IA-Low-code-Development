@@ -7,6 +7,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from atexit import register
+from pathlib import Path
 from typing import Any
 
 try:
@@ -14,8 +15,14 @@ try:
 except ModuleNotFoundError:
     cv2 = None
 
-from flask import Flask, Response, jsonify, render_template, request, session
+from flask import Flask, Response, jsonify, render_template, request, send_file, session
 
+from analytics.advanced_predict_decision import (
+    DEFAULT_OUTPUT_ROOT as ADVANCED_ANALYTICS_OUTPUT_ROOT,
+    VALID_COLUMNS as ADVANCED_VALID_COLUMNS,
+    load_prediction_artifacts,
+    run_prediction_analysis,
+)
 from debug_runtime import create_session, serialize_state, step_once
 from database import SensorDatabase
 from start_mqtt_listener import start_mqtt_listener
@@ -47,6 +54,7 @@ sensor_db = SensorDatabase()
 mqtt_db: SensorDatabase | None = None
 mqtt_handler = None
 camera_capture = None
+advanced_analytics_output_root = Path(ADVANCED_ANALYTICS_OUTPUT_ROOT)
 
 
 def start_app_mqtt() -> None:
@@ -340,6 +348,59 @@ def get_model_request_args() -> tuple[str, int, int, str]:
     return device_id, hours, min_points, target
 
 
+def parse_string_list_query(name: str) -> list[str]:
+    values = request.args.getlist(name)
+    if len(values) == 1 and ',' in values[0]:
+        values = [item.strip() for item in values[0].split(',')]
+    return [str(item).strip() for item in values if str(item).strip()]
+
+
+def get_advanced_prediction_request_args() -> dict[str, Any]:
+    device_id, _, _ = get_analysis_request_args()
+    target = str(request.args.get('target') or 'soil_humidity').strip() or 'soil_humidity'
+    resample = str(request.args.get('resample') or 'D').strip() or 'D'
+    window = max(12, min(safe_int(request.args.get('window'), 120), 720))
+    lags = max(1, min(safe_int(request.args.get('lags'), 7), 30))
+    forecast_steps = max(1, min(safe_int(request.args.get('forecast'), 7), 60))
+    low_threshold = _parse_query_float('low_threshold')
+    high_threshold = _parse_query_float('high_threshold')
+    feature_cols = parse_string_list_query('features')
+    refresh_text = str(request.args.get('refresh') or 'true').strip().lower()
+    refresh = refresh_text not in {'0', 'false', 'no'}
+
+    return {
+        'device_id': device_id,
+        'target': target,
+        'feature_cols': feature_cols or None,
+        'resample': resample,
+        'window': window,
+        'lags': lags,
+        'forecast_steps': forecast_steps,
+        'low_threshold': low_threshold,
+        'high_threshold': high_threshold,
+        'refresh': refresh,
+    }
+
+
+def build_generated_file_url(relative_file: str) -> str:
+    relative_path = str(relative_file or '').replace('\\', '/').lstrip('/')
+    quoted = urllib.parse.quote(relative_path, safe='/')
+    return f'/api/agriculture/analytics/generated/{quoted}'
+
+
+def attach_advanced_prediction_file_urls(payload: dict[str, Any]) -> dict[str, Any]:
+    relative_files = payload.get('relative_files')
+    if not isinstance(relative_files, dict):
+        return payload
+
+    payload['file_urls'] = {
+        key: build_generated_file_url(value)
+        for key, value in relative_files.items()
+        if value and ':' not in str(value)
+    }
+    return payload
+
+
 def run_analysis_task(analysis_type: str, device_id: str, hours: int, limit: int) -> Any:
     return sensor_db.run_analysis_task(
         analysis_type=analysis_type,
@@ -528,6 +589,67 @@ def get_agriculture_decision():
     device_id, hours, _ = get_analysis_request_args()
     decision = sensor_db.get_agriculture_decision_engine(device_id=device_id, hours=hours)
     return jsonify({'status': 'ok', 'data': decision})
+
+
+@app.route('/api/agriculture/analytics/advanced-prediction', methods=['GET'])
+def get_agriculture_advanced_prediction():
+    args = get_advanced_prediction_request_args()
+    if args['target'] not in ADVANCED_VALID_COLUMNS:
+        return json_error(
+            f"不支持的预测字段：{args['target']}",
+            400,
+            'ADVANCED_PREDICTION_TARGET_INVALID',
+        )
+
+    try:
+        if args['refresh']:
+            result = run_prediction_analysis(
+                db_path=sensor_db.db_path,
+                device_id=args['device_id'],
+                target=args['target'],
+                feature_cols=args['feature_cols'],
+                resample=args['resample'],
+                window=args['window'],
+                lags=args['lags'],
+                forecast_steps=args['forecast_steps'],
+                low_threshold=args['low_threshold'],
+                high_threshold=args['high_threshold'],
+            )
+        else:
+            result = load_prediction_artifacts(
+                target=args['target'],
+                device_id=args['device_id'],
+            )
+            if not result:
+                return json_error(
+                    '当前还没有已生成的高级预测分析结果，请先带默认参数访问一次接口生成结果。',
+                    404,
+                    'ADVANCED_PREDICTION_NOT_FOUND',
+                )
+    except Exception as error:
+        fallback = load_prediction_artifacts(
+            target=args['target'],
+            device_id=args['device_id'],
+        )
+        if fallback:
+            fallback['message'] = f"本次重新生成失败，已返回最近一次结果：{error}"
+            return jsonify({'status': 'ok', 'data': attach_advanced_prediction_file_urls(fallback)})
+        return json_error(str(error), 500, 'ADVANCED_PREDICTION_ERROR')
+
+    return jsonify({'status': 'ok', 'data': attach_advanced_prediction_file_urls(result)})
+
+
+@app.route('/api/agriculture/analytics/generated/<path:relative_path>', methods=['GET'])
+def get_generated_analytics_file(relative_path: str):
+    root = advanced_analytics_output_root.resolve()
+    candidate = (root / relative_path).resolve()
+
+    if candidate != root and root not in candidate.parents:
+        return json_error('请求的文件路径无效。', 400, 'ADVANCED_PREDICTION_PATH_INVALID')
+    if not candidate.exists() or not candidate.is_file():
+        return json_error('请求的分析文件不存在。', 404, 'ADVANCED_PREDICTION_FILE_NOT_FOUND')
+
+    return send_file(candidate, conditional=True, max_age=0)
 
 
 @app.route('/api/agriculture/model', methods=['GET'])

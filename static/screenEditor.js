@@ -90,6 +90,12 @@ const COMPONENT_LIBRARY = [
         description: '展示优先决策动作、风险说明与模块建议列表。'
     },
     {
+        type: 'agri-summary',
+        icon: '🧾',
+        title: '分析摘要卡',
+        description: '专门解析农业分析摘要节点输出，自动去掉原始 JSON、英文键名和多余括号。'
+    },
+    {
         type: 'weather',
         icon: '🌤️',
         title: '天气信息',
@@ -326,6 +332,7 @@ function getComponentTypeLabel(componentType) {
         'agri-climate': '气候预测卡',
         'agri-yield': '产量预测卡',
         'agri-decision': '辅助决策卡',
+        'agri-summary': '分析摘要卡',
         'agri-system': '系统数据卡',
         'agri-environment': '环境监测卡',
         'agri-communication': '通讯状态卡'
@@ -344,6 +351,9 @@ function summarizeComponentProps(component) {
     }
     if (component.type === 'weather') return `地点：${component.props.subtitle || '未命名'} · ${getWeatherDataMode(component) === WEATHER_DATA_MODE_API ? 'API' : '手动'}`;
     if (component.type === 'agri-sensor') return `传感器数量：${component.props.sensors?.length || 0}`;
+    if (component.type === 'agri-summary') {
+        return `数据模式：${normalizeSource(component.props.source).mode === SOURCE_MODE_WORKFLOW_PORT ? '工作流端口' : '手动内容'}`;
+    }
     if (component.type === 'agri-model' || component.type === 'agri-climate' || component.type === 'agri-yield' || component.type === 'agri-decision') {
         return `数据模式：${normalizeSource(component.props.source).mode === SOURCE_MODE_WORKFLOW_PORT ? '工作流端口' : '手动 JSON'}`;
     }
@@ -702,6 +712,67 @@ function createAgriDecisionComponent(x, y) {
     };
 }
 
+function buildSampleAgriSummaryPayload() {
+    return {
+        overview: {
+            device_name: '示范温室 1 号设备',
+            location: '武汉示范农田 A 区',
+            work_status: '正常',
+            risk_score: 68,
+            alert_count: 2,
+            observation: '近 24 小时棚内环境整体可控，但土壤湿度已出现回落，当前更适合提前补水而不是被动等待告警扩大。'
+        },
+        alerts: [
+            {
+                level: 'high',
+                metric: 'soil_humidity',
+                message: '土壤湿度偏低，存在缺水风险。',
+                suggestion: '建议在未来 2 小时内分区补水，并持续观察回升速度。'
+            },
+            {
+                level: 'medium',
+                metric: 'temperature',
+                message: '棚内温度有轻微上升趋势。',
+                suggestion: '建议保持低频通风，避免午后热负荷继续抬升。'
+            }
+        ],
+        recommendations: [
+            {
+                priority: 'P1',
+                title: '择时补水',
+                detail: '根据当前土壤湿度走势优先执行补水动作，降低未来 6 小时的缺水波动。',
+                expected_effect: '缓解根系水分压力，稳定植株生长节奏。'
+            },
+            {
+                priority: 'P2',
+                title: '保持低频通风',
+                detail: '在温度继续抬升前预留通风窗口，减少棚内闷热堆积。',
+                expected_effect: '维持温湿环境稳定，降低病害压力。'
+            }
+        ]
+    };
+}
+
+function buildSampleAgriSummaryJson() {
+    return JSON.stringify(buildSampleAgriSummaryPayload(), null, 2);
+}
+
+function createAgriSummaryComponent(x, y) {
+    return {
+        id: state.nextId++,
+        type: 'agri-summary',
+        x,
+        y,
+        width: 460,
+        height: 340,
+        props: {
+            title: '农业分析摘要',
+            jsonText: buildSampleAgriSummaryJson(),
+            source: createDefaultSource()
+        }
+    };
+}
+
 function createComponent(type, x, y) {
     if (type === 'text') return createTextComponent(x, y);
     if (type === 'image') return createImageComponent(x, y);
@@ -714,6 +785,7 @@ function createComponent(type, x, y) {
     if (type === 'agri-climate') return createAgriClimateComponent(x, y);
     if (type === 'agri-yield') return createAgriYieldComponent(x, y);
     if (type === 'agri-decision') return createAgriDecisionComponent(x, y);
+    if (type === 'agri-summary') return createAgriSummaryComponent(x, y);
     if (type === 'weather') return createWeatherComponent(x, y);
     return null;
 }
@@ -735,6 +807,8 @@ function normalizeComponent(rawComponent) {
                             ? 'agri-yield'
                             : rawType === 'agri-decision'
                                 ? 'agri-decision'
+                                : rawType === 'agri-summary'
+                                    ? 'agri-summary'
                 : rawType === 'weather'
                     ? 'weather'
                 : 'text';
@@ -753,6 +827,8 @@ function normalizeComponent(rawComponent) {
                             ? createAgriYieldComponent(80, 80)
                             : type === 'agri-decision'
                                 ? createAgriDecisionComponent(80, 80)
+                                : type === 'agri-summary'
+                                    ? createAgriSummaryComponent(80, 80)
                 : type === 'weather'
                     ? createWeatherComponent(80, 80)
                 : createTextComponent(80, 80);
@@ -780,7 +856,8 @@ function isAgricultureComponentType(type) {
         || type === 'agri-model'
         || type === 'agri-climate'
         || type === 'agri-yield'
-        || type === 'agri-decision';
+        || type === 'agri-decision'
+        || type === 'agri-summary';
 }
 
 function isAgriInsightComponentType(type) {
@@ -905,11 +982,13 @@ function usesWorkflowSource(type) {
         || type === 'agri-model'
         || type === 'agri-climate'
         || type === 'agri-yield'
-        || type === 'agri-decision';
+        || type === 'agri-decision'
+        || type === 'agri-summary';
 }
 
 function getSupportedPortTypes(componentType) {
     if (componentType === 'image') return ['string'];
+    if (componentType === 'agri-summary') return ['string'];
     if (isAgriInsightComponentType(componentType)) return ['string', 'csv'];
     if (componentType === 'chart') return ['string', 'csv'];
     return ['string', 'int'];
@@ -1168,6 +1247,9 @@ function getSourceStatusText(component) {
         }
         if (isAgriInsightComponentType(component.type)) {
             return `${typeHint}${runtimeHint} 该组件会把文本端口值解析为农业模型 JSON，并按模型概览、气候预测、产量预测或辅助决策视图进行渲染。`;
+        }
+        if (component.type === 'agri-summary') {
+            return `${typeHint}${runtimeHint} 该组件会优先解析分析摘要节点返回的 JSON 文本，并自动整理为可直接上屏的中文摘要卡。`;
         }
         return `${typeHint}${runtimeHint} 文本组件支持字符串与整型端口。`;
     }
@@ -2314,6 +2396,583 @@ function getAgriDecisionView(payload) {
     };
 }
 
+function cleanAgriSummaryText(text) {
+    let next = String(text || '').replace(/\r\n/g, '\n').trim();
+    if (!next) return '';
+    next = next.replace(/^[`"'“”]+|[`"'“”]+$/g, '');
+    next = next.replace(/[【】]/g, ' ');
+    next = next.replace(/[{}\[\]]/g, ' ');
+    next = next.replace(/[ \t]{2,}/g, ' ');
+    next = next.replace(/\n{3,}/g, '\n\n');
+    return next.trim();
+}
+
+function isMeaningfulAgriSummaryText(text) {
+    const next = cleanAgriSummaryText(text);
+    if (!next) return false;
+    const lowered = next.toLowerCase();
+    return lowered !== 'ok' && lowered !== 'null' && lowered !== 'undefined' && lowered !== 'waiting';
+}
+
+function collectAgriSummaryTexts(items = [], limit = 6) {
+    const result = [];
+    const seen = new Set();
+
+    for (const item of items) {
+        const text = cleanAgriSummaryText(item);
+        if (!isMeaningfulAgriSummaryText(text)) continue;
+        if (seen.has(text)) continue;
+        seen.add(text);
+        result.push(text);
+        if (result.length >= limit) break;
+    }
+
+    return result;
+}
+
+function pickFirstAgriSummaryText(items = []) {
+    return collectAgriSummaryTexts(items, 1)[0] || '';
+}
+
+function mapAgriSummaryMetricName(key) {
+    const labels = {
+        temperature: '温度',
+        humidity: '空气湿度',
+        soil_humidity: '土壤湿度',
+        pm25: 'PM2.5',
+        light_lux: '光照',
+        work_status: '运行状态',
+        risk_score: '风险分数',
+        alert_count: '告警数量',
+        sample_count: '样本量',
+        confidence: '置信度',
+        yield_index: '产量指数',
+        estimated_yield_kg_per_mu: '亩产估算',
+        data_freshness_minutes: '数据新鲜度',
+        timeline_points: '趋势点数',
+        priority: '优先级'
+    };
+    return labels[key] || cleanAgriSummaryText(key);
+}
+
+function mapAgriAlertLevel(level) {
+    const normalized = String(level || '').trim().toLowerCase();
+    if (normalized === 'high') return '高风险';
+    if (normalized === 'medium') return '中风险';
+    if (normalized === 'low') return '低风险';
+    return cleanAgriSummaryText(level) || '风险提示';
+}
+
+function mapAgriPriorityLabel(priority) {
+    const normalized = String(priority || '').trim().toUpperCase();
+    if (!normalized) return '待定';
+    return normalized;
+}
+
+function mapAgriMetricLabel(metric) {
+    return mapAgriSummaryMetricName(metric);
+}
+
+function formatAgriSummaryMetricValue(key, value) {
+    if (value == null || value === '') return '';
+    if (typeof value === 'boolean') return value ? '是' : '否';
+    if (!Number.isFinite(Number(value))) return cleanAgriSummaryText(value);
+
+    const numeric = Number(value);
+    if (key === 'temperature' || key === 'avg_temperature_24h') return `${numeric.toFixed(1)} °C`;
+    if (key === 'humidity' || key === 'avg_humidity_24h' || key === 'soil_humidity' || key === 'avg_soil_humidity_24h') return `${numeric.toFixed(1)} %`;
+    if (key === 'pm25' || key === 'avg_pm25_24h') return `${numeric.toFixed(1)} ug/m3`;
+    if (key === 'light_lux' || key === 'max_light_24h') return `${Math.round(numeric)} Lux`;
+    if (key === 'estimated_yield_kg_per_mu') return `${numeric.toFixed(1)} kg/亩`;
+    if (key === 'data_freshness_minutes') return `${numeric.toFixed(1)} 分钟`;
+    if (key === 'confidence') return `${numeric.toFixed(1)} %`;
+    if (Number.isInteger(numeric)) return String(numeric);
+    return numeric.toFixed(1);
+}
+
+function pushAgriSummaryMetric(metrics, label, value) {
+    const safeLabel = cleanAgriSummaryText(label);
+    const safeValue = cleanAgriSummaryText(value);
+    if (!safeLabel || !safeValue) return;
+    metrics.push({ label: safeLabel, value: safeValue });
+}
+
+function pushAgriSummarySection(sections, title, items, limit = 4) {
+    const safeItems = collectAgriSummaryTexts(items, limit);
+    if (!safeItems.length) return;
+    sections.push({
+        title: cleanAgriSummaryText(title) || '摘要内容',
+        items: safeItems.slice(0, limit)
+    });
+}
+
+function buildAgriLatestReadingText(reading) {
+    if (!reading || typeof reading !== 'object') return '';
+    const parts = [];
+    if (reading.temperature != null) parts.push(`温度 ${formatAgriSummaryMetricValue('temperature', reading.temperature)}`);
+    if (reading.humidity != null) parts.push(`空气湿度 ${formatAgriSummaryMetricValue('humidity', reading.humidity)}`);
+    if (reading.soil_humidity != null) parts.push(`土壤湿度 ${formatAgriSummaryMetricValue('soil_humidity', reading.soil_humidity)}`);
+    if (reading.pm25 != null) parts.push(`PM2.5 ${formatAgriSummaryMetricValue('pm25', reading.pm25)}`);
+    if (reading.light_lux != null) parts.push(`光照 ${formatAgriSummaryMetricValue('light_lux', reading.light_lux)}`);
+    const suffix = cleanAgriSummaryText(reading.timestamp) ? `，采集时间 ${cleanAgriSummaryText(reading.timestamp)}` : '';
+    return parts.length ? `${parts.join('，')}${suffix}` : '';
+}
+
+function buildAgriAlertLine(item) {
+    if (!item || typeof item !== 'object') return cleanAgriSummaryText(item);
+    const head = `[${mapAgriAlertLevel(item.level)}] ${cleanAgriSummaryText(item.message) || cleanAgriSummaryText(item.metric) || '存在风险提示'}`;
+    const suggestion = cleanAgriSummaryText(item.suggestion);
+    return suggestion ? `${head} 建议：${suggestion}` : head;
+}
+
+function buildAgriRecommendationLine(item) {
+    if (!item || typeof item !== 'object') return cleanAgriSummaryText(item);
+    const priority = mapAgriPriorityLabel(item.priority);
+    const title = cleanAgriSummaryText(item.title) || cleanAgriSummaryText(item.action) || '建议项';
+    const detail = cleanAgriSummaryText(item.detail) || cleanAgriSummaryText(item.reason);
+    const effect = cleanAgriSummaryText(item.expected_effect);
+    const base = `[${priority}] ${title}${detail ? `：${detail}` : ''}`;
+    return effect ? `${base} 预期效果：${effect}` : base;
+}
+
+function buildAgriDecisionLine(item) {
+    if (!item || typeof item !== 'object') return cleanAgriSummaryText(item);
+    const module = cleanAgriSummaryText(item.module);
+    const action = cleanAgriSummaryText(item.action) || '待执行';
+    const reason = cleanAgriSummaryText(item.reason);
+    const priority = mapAgriPriorityLabel(item.priority);
+    const score = item.score != null ? ` · 评分 ${formatAgriSummaryMetricValue('score', item.score)}` : '';
+    const prefix = module ? `[${priority}] ${module} / ${action}` : `[${priority}] ${action}`;
+    return `${prefix}${score}${reason ? `：${reason}` : ''}`;
+}
+
+function buildAgriFactorLine(item) {
+    if (!item || typeof item !== 'object') return cleanAgriSummaryText(item);
+    const label = cleanAgriSummaryText(item.label) || cleanAgriSummaryText(item.key) || '影响因子';
+    const score = item.score != null ? formatAgriSummaryMetricValue('score', item.score) : '';
+    const level = cleanAgriSummaryText(item.level);
+    return `${label}${score ? `：${score}` : ''}${level ? `（${level}）` : ''}`;
+}
+
+function buildGenericAgriSummaryLine(item) {
+    if (item == null) return '';
+    if (typeof item !== 'object') return cleanAgriSummaryText(item);
+    if (item.message || item.suggestion) return buildAgriAlertLine(item);
+    if (item.title || item.detail || item.expected_effect) return buildAgriRecommendationLine(item);
+    if (item.action || item.reason || item.module) return buildAgriDecisionLine(item);
+    if (item.label || item.score != null) return buildAgriFactorLine(item);
+
+    const parts = [];
+    Object.entries(item).forEach(([key, value]) => {
+        if (value == null || value === '' || typeof value === 'object') return;
+        parts.push(`${mapAgriSummaryMetricName(key)}：${cleanAgriSummaryText(value)}`);
+    });
+    return cleanAgriSummaryText(parts.join('，'));
+}
+
+function getAgriSummaryPayloadValue(rawValue) {
+    if (rawValue == null) return { type: 'text', value: '' };
+    if (Array.isArray(rawValue)) return { type: 'structured', value: rawValue };
+    if (typeof rawValue === 'object') return { type: 'structured', value: unwrapStructuredPayload(rawValue) || rawValue };
+    const text = String(rawValue || '').trim();
+    if (!text) return { type: 'text', value: '' };
+    const parsed = parseStructuredJson(text);
+    if (parsed.ok) {
+        return {
+            type: 'structured',
+            value: unwrapStructuredPayload(parsed.value) || parsed.value
+        };
+    }
+    return { type: 'text', value: text };
+}
+
+function buildAgriSummaryTextView(text, title = '') {
+    const safeTitle = cleanAgriSummaryText(title) || '农业分析摘要';
+    const normalizedText = cleanAgriSummaryText(text);
+    const sentences = collectAgriSummaryTexts(
+        normalizedText
+            .split(/\n+|[。！？；]+/u)
+            .map(item => item.trim()),
+        6
+    );
+    const lead = sentences[0] || normalizedText || '暂无摘要内容。';
+    const secondary = sentences[1] || '';
+    const sections = [];
+    pushAgriSummarySection(sections, '摘要内容', sentences.slice(1), 4);
+
+    return {
+        title: safeTitle,
+        chip: '文本摘要',
+        lead,
+        secondary,
+        metrics: [],
+        sections
+    };
+}
+
+function buildAgriOverviewSummaryView(payload, title = '') {
+    const safeTitle = cleanAgriSummaryText(title) || '总览分析摘要';
+    const metrics = [];
+    const sections = [];
+
+    pushAgriSummaryMetric(metrics, '设备', cleanAgriSummaryText(payload.device_name));
+    pushAgriSummaryMetric(metrics, '运行状态', cleanAgriSummaryText(payload.work_status || (payload.online ? '在线' : payload.online === false ? '离线' : '')));
+    pushAgriSummaryMetric(metrics, '风险分数', formatAgriSummaryMetricValue('risk_score', payload.risk_score));
+    pushAgriSummaryMetric(metrics, '告警数量', formatAgriSummaryMetricValue('alert_count', payload.alert_count));
+
+    const lead = pickFirstAgriSummaryText([
+        payload.observation,
+        payload.summary,
+        payload.message
+    ]) || '当前暂无可读的总览结论。';
+
+    const secondary = pickFirstAgriSummaryText([
+        buildAgriLatestReadingText(payload.latest_reading),
+        payload.location ? `监测位置：${cleanAgriSummaryText(payload.location)}` : '',
+        payload.data_freshness_minutes != null ? `数据距今约 ${formatAgriSummaryMetricValue('data_freshness_minutes', payload.data_freshness_minutes)}` : ''
+    ]);
+
+    pushAgriSummarySection(sections, '最新观测', [
+        buildAgriLatestReadingText(payload.latest_reading)
+    ], 1);
+
+    pushAgriSummarySection(sections, '运行信息', [
+        payload.location ? `监测位置：${cleanAgriSummaryText(payload.location)}` : '',
+        payload.total_records != null ? `历史记录 ${formatAgriSummaryMetricValue('total_records', payload.total_records)} 条` : '',
+        payload.data_freshness_minutes != null ? `数据距今约 ${formatAgriSummaryMetricValue('data_freshness_minutes', payload.data_freshness_minutes)}` : ''
+    ], 3);
+
+    return {
+        title: safeTitle,
+        chip: '总览概况',
+        lead,
+        secondary,
+        metrics: metrics.slice(0, 4),
+        sections
+    };
+}
+
+function buildAgriAlertsSummaryView(payload, title = '') {
+    const items = Array.isArray(payload) ? payload : (Array.isArray(payload.alerts) ? payload.alerts : []);
+    const safeTitle = cleanAgriSummaryText(title) || '告警分析摘要';
+    const highCount = items.filter(item => String(item?.level || '').toLowerCase() === 'high').length;
+    const metrics = [];
+    const sections = [];
+
+    pushAgriSummaryMetric(metrics, '告警数量', String(items.length));
+    pushAgriSummaryMetric(metrics, '高风险', String(highCount));
+    pushAgriSummaryMetric(metrics, '重点指标', mapAgriMetricLabel(items[0]?.metric));
+
+    const lead = pickFirstAgriSummaryText(items.map(item => item?.message))
+        || `当前共识别 ${items.length} 条风险告警。`;
+    const secondary = pickFirstAgriSummaryText(items.map(item => item?.suggestion ? `建议：${item.suggestion}` : ''));
+
+    pushAgriSummarySection(sections, '风险告警', items.map(buildAgriAlertLine), 4);
+    pushAgriSummarySection(sections, '处置建议', items.map(item => item?.suggestion), 4);
+
+    return {
+        title: safeTitle,
+        chip: '风险告警',
+        lead,
+        secondary,
+        metrics,
+        sections
+    };
+}
+
+function buildAgriRecommendationsSummaryView(payload, title = '') {
+    const items = Array.isArray(payload) ? payload : (Array.isArray(payload.recommendations) ? payload.recommendations : []);
+    const safeTitle = cleanAgriSummaryText(title) || '决策建议摘要';
+    const topPriority = items
+        .map(item => mapAgriPriorityLabel(item?.priority))
+        .sort()[0] || '';
+    const metrics = [];
+    const sections = [];
+
+    pushAgriSummaryMetric(metrics, '建议数量', String(items.length));
+    pushAgriSummaryMetric(metrics, '最高优先级', topPriority);
+
+    const lead = pickFirstAgriSummaryText([
+        ...items.map(item => item?.detail),
+        ...items.map(item => item?.title)
+    ]) || `当前共生成 ${items.length} 条处置建议。`;
+    const secondary = pickFirstAgriSummaryText(items.map(item => item?.expected_effect ? `预期效果：${item.expected_effect}` : ''));
+
+    pushAgriSummarySection(sections, '处置建议', items.map(buildAgriRecommendationLine), 4);
+    pushAgriSummarySection(sections, '预期效果', items.map(item => item?.expected_effect), 3);
+
+    return {
+        title: safeTitle,
+        chip: '策略建议',
+        lead,
+        secondary,
+        metrics,
+        sections
+    };
+}
+
+function buildAgriDecisionSummaryView(payload, title = '') {
+    const safeTitle = cleanAgriSummaryText(title) || '辅助决策摘要';
+    const topDecision = payload?.top_decision || {};
+    const modules = Array.isArray(payload?.modules) ? payload.modules : [];
+    const metrics = [];
+    const sections = [];
+
+    pushAgriSummaryMetric(metrics, '风险分数', formatAgriSummaryMetricValue('risk_score', payload?.risk_score));
+    pushAgriSummaryMetric(metrics, '产量指数', formatAgriSummaryMetricValue('yield_index', payload?.yield_index));
+    pushAgriSummaryMetric(metrics, '优先级', mapAgriPriorityLabel(topDecision.priority));
+
+    const lead = pickFirstAgriSummaryText([
+        payload?.decision_summary,
+        topDecision?.action
+    ]) || '当前暂无可读的决策摘要。';
+    const secondary = pickFirstAgriSummaryText([topDecision?.reason]);
+
+    pushAgriSummarySection(sections, '执行建议', modules.map(buildAgriDecisionLine), 4);
+
+    return {
+        title: safeTitle,
+        chip: '辅助决策',
+        lead,
+        secondary,
+        metrics,
+        sections
+    };
+}
+
+function buildAgriForecastSummaryView(payload, title = '') {
+    const safeTitle = cleanAgriSummaryText(title) || '气候趋势摘要';
+    const predictions = payload?.predictions || {};
+    const metrics = [];
+    const sections = [];
+
+    pushAgriSummaryMetric(metrics, '置信度', formatAgriSummaryMetricValue('confidence', payload?.confidence));
+    pushAgriSummaryMetric(metrics, '样本量', formatAgriSummaryMetricValue('sample_count', payload?.sample_count));
+    pushAgriSummaryMetric(metrics, '微气候', cleanAgriSummaryText(payload?.microclimate_state));
+
+    const lead = pickFirstAgriSummaryText([
+        payload?.weather_summary,
+        payload?.summary
+    ]) || '当前暂无可读的气候趋势说明。';
+
+    pushAgriSummarySection(sections, '预测指标', [
+        predictions?.temperature?.next_6h != null ? `未来 6 小时温度 ${formatAgriSummaryMetricValue('temperature', predictions.temperature.next_6h)}，趋势 ${cleanAgriSummaryText(predictions.temperature?.trend)}` : '',
+        predictions?.humidity?.next_6h != null ? `未来 6 小时空气湿度 ${formatAgriSummaryMetricValue('humidity', predictions.humidity.next_6h)}，趋势 ${cleanAgriSummaryText(predictions.humidity?.trend)}` : '',
+        predictions?.soil_humidity?.next_6h != null ? `未来 6 小时土壤湿度 ${formatAgriSummaryMetricValue('soil_humidity', predictions.soil_humidity.next_6h)}，趋势 ${cleanAgriSummaryText(predictions.soil_humidity?.trend)}` : ''
+    ], 3);
+
+    return {
+        title: safeTitle,
+        chip: '气候预测',
+        lead,
+        secondary: '',
+        metrics,
+        sections
+    };
+}
+
+function buildAgriYieldSummaryView(payload, title = '') {
+    const safeTitle = cleanAgriSummaryText(title) || '产量预测摘要';
+    const factors = Array.isArray(payload?.factor_bars)
+        ? payload.factor_bars
+        : Array.isArray(payload?.factors)
+            ? payload.factors
+            : Object.entries(payload?.factors || {}).map(([key, value]) => ({ label: mapAgriSummaryMetricName(key), score: value }));
+    const metrics = [];
+    const sections = [];
+
+    pushAgriSummaryMetric(metrics, '产量指数', formatAgriSummaryMetricValue('yield_index', payload?.yield_index));
+    pushAgriSummaryMetric(metrics, '亩产估算', formatAgriSummaryMetricValue('estimated_yield_kg_per_mu', payload?.estimated_yield_kg_per_mu));
+    pushAgriSummaryMetric(metrics, '等级', cleanAgriSummaryText(payload?.yield_grade));
+
+    const lead = pickFirstAgriSummaryText([
+        payload?.narrative,
+        payload?.summary
+    ]) || '当前暂无可读的产量预测说明。';
+
+    pushAgriSummarySection(sections, '影响因子', factors.map(buildAgriFactorLine), 4);
+
+    return {
+        title: safeTitle,
+        chip: '产量预测',
+        lead,
+        secondary: '',
+        metrics,
+        sections
+    };
+}
+
+function buildAgriReportSummaryView(payload, title = '') {
+    const safeTitle = cleanAgriSummaryText(title) || '农业分析报告';
+    const overview = payload?.overview && typeof payload.overview === 'object' ? payload.overview : {};
+    const alerts = Array.isArray(payload?.alerts) ? payload.alerts : [];
+    const recommendations = Array.isArray(payload?.recommendations) ? payload.recommendations : [];
+    const highlights = Array.isArray(payload?.contest_fit?.highlights) ? payload.contest_fit.highlights : [];
+    const outline = Array.isArray(payload?.report_outline) ? payload.report_outline : [];
+    const metrics = [];
+    const sections = [];
+
+    pushAgriSummaryMetric(metrics, '风险分数', formatAgriSummaryMetricValue('risk_score', overview?.risk_score));
+    pushAgriSummaryMetric(metrics, '告警数量', formatAgriSummaryMetricValue('alert_count', overview?.alert_count));
+    pushAgriSummaryMetric(metrics, '趋势点数', formatAgriSummaryMetricValue('timeline_points', payload?.trend_summary?.timeline_points));
+
+    const lead = pickFirstAgriSummaryText([
+        overview?.observation,
+        payload?.summary,
+        payload?.contest_fit?.scenario,
+        highlights[0]
+    ]) || '当前暂无可读的报告摘要。';
+    const secondary = pickFirstAgriSummaryText([
+        overview?.location ? `监测位置：${overview.location}` : '',
+        buildAgriLatestReadingText(overview?.latest_reading)
+    ]);
+
+    pushAgriSummarySection(sections, '关键亮点', highlights, 3);
+    pushAgriSummarySection(sections, '报告提纲', outline, 3);
+    pushAgriSummarySection(
+        sections,
+        alerts.length >= recommendations.length ? '风险告警' : '处置建议',
+        alerts.length >= recommendations.length ? alerts.map(buildAgriAlertLine) : recommendations.map(buildAgriRecommendationLine),
+        3
+    );
+
+    return {
+        title: safeTitle,
+        chip: '报告摘要',
+        lead,
+        secondary,
+        metrics,
+        sections
+    };
+}
+
+function buildGenericAgriObjectSummaryView(payload, title = '') {
+    const safeTitle = cleanAgriSummaryText(title) || '农业分析摘要';
+    const metrics = [];
+    const sections = [];
+    const primitiveTexts = [];
+
+    Object.entries(payload || {}).forEach(([key, value]) => {
+        if (value == null || value === '') return;
+        if (Array.isArray(value)) {
+            pushAgriSummarySection(sections, mapAgriSummaryMetricName(key), value.map(buildGenericAgriSummaryLine), 3);
+            return;
+        }
+        if (typeof value === 'object') return;
+        const label = mapAgriSummaryMetricName(key);
+        const formattedValue = formatAgriSummaryMetricValue(key, value) || cleanAgriSummaryText(value);
+        if (metrics.length < 4) pushAgriSummaryMetric(metrics, label, formattedValue);
+        primitiveTexts.push(`${label}：${formattedValue}`);
+    });
+
+    const lead = pickFirstAgriSummaryText(primitiveTexts) || '当前暂无可读的结构化摘要。';
+
+    return {
+        title: safeTitle,
+        chip: '结构化摘要',
+        lead,
+        secondary: '',
+        metrics,
+        sections
+    };
+}
+
+function buildGenericAgriListSummaryView(items, title = '') {
+    const safeTitle = cleanAgriSummaryText(title) || '农业分析摘要';
+    const lines = collectAgriSummaryTexts((Array.isArray(items) ? items : []).map(buildGenericAgriSummaryLine), 6);
+    const metrics = [];
+    const sections = [];
+
+    pushAgriSummaryMetric(metrics, '条目数', String(Array.isArray(items) ? items.length : 0));
+    pushAgriSummarySection(sections, '摘要条目', lines.slice(1), 4);
+
+    return {
+        title: safeTitle,
+        chip: '列表摘要',
+        lead: lines[0] || '暂无可读的列表摘要。',
+        secondary: lines[1] || '',
+        metrics,
+        sections
+    };
+}
+
+function buildAgriSummaryView(payloadValue, title = '') {
+    if (Array.isArray(payloadValue)) {
+        if (payloadValue.some(item => item && typeof item === 'object' && (item.message || item.suggestion))) {
+            return buildAgriAlertsSummaryView(payloadValue, title);
+        }
+        if (payloadValue.some(item => item && typeof item === 'object' && (item.title || item.detail || item.expected_effect))) {
+            return buildAgriRecommendationsSummaryView(payloadValue, title);
+        }
+        return buildGenericAgriListSummaryView(payloadValue, title);
+    }
+
+    if (payloadValue && typeof payloadValue === 'object') {
+        if (payloadValue.contest_fit || payloadValue.report_outline || payloadValue.overview || payloadValue.alerts || payloadValue.recommendations) {
+            return buildAgriReportSummaryView(payloadValue, title);
+        }
+        if (payloadValue.decision_summary || payloadValue.top_decision || payloadValue.modules) {
+            return buildAgriDecisionSummaryView(payloadValue, title);
+        }
+        if (payloadValue.weather_summary || payloadValue.microclimate_state || payloadValue.predictions) {
+            return buildAgriForecastSummaryView(payloadValue, title);
+        }
+        if (payloadValue.yield_index != null || payloadValue.estimated_yield_kg_per_mu != null || payloadValue.yield_grade || payloadValue.narrative) {
+            return buildAgriYieldSummaryView(payloadValue, title);
+        }
+        if (payloadValue.observation || payloadValue.latest_reading || payloadValue.risk_score != null || payloadValue.alert_count != null || payloadValue.device_name) {
+            return buildAgriOverviewSummaryView(payloadValue, title);
+        }
+        if (payloadValue.status || payloadValue.message) {
+            return buildAgriSummaryTextView(payloadValue.message || `当前状态：${payloadValue.status}`, title);
+        }
+        return buildGenericAgriObjectSummaryView(payloadValue, title);
+    }
+
+    return buildAgriSummaryTextView(payloadValue, title);
+}
+
+function getAgriSummaryRenderState(component) {
+    const binding = resolveWorkflowBinding(component);
+    let rawValue = component?.props?.jsonText || '';
+    let sourceNote = '';
+
+    if (binding.valid) {
+        if (binding.runtimeValue?.ok) {
+            rawValue = binding.runtimeValue.value;
+            sourceNote = `${binding.label} · ${getPortTypeLabel(binding.port.dataType)}`;
+        } else {
+            return {
+                error: '当前工作流端口暂无可用摘要数据。',
+                sourceNote: `${binding.label} · 端口值不可用`,
+                view: null
+            };
+        }
+    } else if (binding.mode === SOURCE_MODE_WORKFLOW_PORT) {
+        return {
+            error: '请选择一个有效的分析摘要工作流端口。',
+            sourceNote: '',
+            view: null
+        };
+    }
+
+    const payload = getAgriSummaryPayloadValue(rawValue);
+    const view = buildAgriSummaryView(payload.value, component?.props?.title);
+    if (!view || (!view.lead && !view.sections?.length && !view.metrics?.length)) {
+        return {
+            error: '暂无可显示的摘要内容。',
+            sourceNote,
+            view: null
+        };
+    }
+
+    return {
+        error: '',
+        sourceNote,
+        view
+    };
+}
+
 function renderAgriModelMarkup(component) {
     const state = getStructuredAgriRenderState(component);
     if (state.error) {
@@ -2437,6 +3096,48 @@ function renderAgriDecisionMarkup(component) {
     `;
 }
 
+function renderAgriSummaryMarkup(component) {
+    const state = getAgriSummaryRenderState(component);
+    if (state.error) {
+        return `<div class="chart-error">${escapeHtml(state.error)}</div>`;
+    }
+
+    const view = state.view || {};
+    const metricsHtml = (Array.isArray(view.metrics) ? view.metrics : []).slice(0, 4).map(metric => `
+        <div class="agri-summary-metric-card">
+            <span class="agri-summary-metric-label">${escapeHtml(String(metric.label || '指标'))}</span>
+            <span class="agri-summary-metric-value">${escapeHtml(String(metric.value || '--'))}</span>
+        </div>
+    `).join('');
+    const sectionsHtml = (Array.isArray(view.sections) ? view.sections : []).slice(0, 3).map(section => `
+        <div class="agri-summary-section">
+            <div class="agri-summary-section-title">${escapeHtml(String(section.title || '摘要内容'))}</div>
+            <div class="agri-summary-item-list">
+                ${(Array.isArray(section.items) ? section.items : []).slice(0, 4).map(item => `
+                    <div class="agri-summary-item">${escapeHtml(String(item || ''))}</div>
+                `).join('')}
+            </div>
+        </div>
+    `).join('');
+
+    return `
+        <div class="agri-panel agri-summary-panel">
+            <div class="agri-panel-head">
+                <div>
+                    <div class="agri-panel-eyebrow">Analysis / Summary</div>
+                    <div class="agri-panel-title">${escapeHtml(component.props.title || view.title || '农业分析摘要')}</div>
+                </div>
+                <div class="agri-mode-chip">${escapeHtml(String(view.chip || '摘要'))}</div>
+            </div>
+            ${state.sourceNote ? `<div class="chart-source-note">${escapeHtml(state.sourceNote)}</div>` : ''}
+            <div class="agri-summary-lead">${escapeHtml(String(view.lead || '暂无摘要说明。'))}</div>
+            ${view.secondary ? `<div class="agri-summary-secondary">${escapeHtml(String(view.secondary))}</div>` : ''}
+            ${metricsHtml ? `<div class="agri-summary-metric-grid">${metricsHtml}</div>` : ''}
+            ${sectionsHtml ? `<div class="agri-summary-sections">${sectionsHtml}</div>` : ''}
+        </div>
+    `;
+}
+
 function getAgricultureDataMode(component) {
     return component?.props?.dataMode === AGRI_DATA_MODE_API ? AGRI_DATA_MODE_API : SOURCE_MODE_MANUAL;
 }
@@ -2518,6 +3219,7 @@ function renderAgricultureComponentMarkup(component, preview = false) {
     if (component.type === 'agri-climate') return renderAgriClimateMarkup(component, preview);
     if (component.type === 'agri-yield') return renderAgriYieldMarkup(component, preview);
     if (component.type === 'agri-decision') return renderAgriDecisionMarkup(component, preview);
+    if (component.type === 'agri-summary') return renderAgriSummaryMarkup(component, preview);
     return '';
 }
 
@@ -3567,6 +4269,43 @@ function renderAgriInsightSettings(component) {
     `;
 }
 
+function renderAgriSummarySettings(component) {
+    const source = normalizeSource(component.props.source);
+    const state = getAgriSummaryRenderState(component);
+    const previewText = state.view
+        ? [state.view.lead, state.view.secondary].filter(Boolean).join('\n')
+        : '';
+
+    return `
+        <section class="prop-section">
+            <h3>组件内容</h3>
+            <div>
+                <label class="prop-label" for="agriSummaryTitleInput">标题</label>
+                <input class="prop-input" id="agriSummaryTitleInput" type="text" value="${escapeHtml(component.props.title || '')}">
+            </div>
+            ${source.mode === SOURCE_MODE_MANUAL ? `
+                <div>
+                    <label class="prop-label" for="agriSummaryTextInput">手动内容</label>
+                    <textarea class="prop-textarea" id="agriSummaryTextInput" spellcheck="false">${escapeHtml(component.props.jsonText || '')}</textarea>
+                </div>
+            ` : `
+                <div>
+                    <label class="prop-label">当前绑定</label>
+                    <div class="source-preview-box">${escapeHtml(state.sourceNote || '工作流端口')}</div>
+                </div>
+            `}
+            <p class="prop-hint">推荐绑定 analytics_summary 节点输出的字符串端口。组件会自动解析 JSON，去除多余的花括号、方括号和书名号，并提取结论、告警和建议。</p>
+            ${previewText ? `
+                <div>
+                    <label class="prop-label">摘要预览</label>
+                    <div class="source-preview-box">${escapeHtml(previewText)}</div>
+                </div>
+            ` : ''}
+            ${state.error ? `<div class="chart-error">${escapeHtml(state.error)}</div>` : ''}
+        </section>
+    `;
+}
+
 function renderComponentDataSection(component) {
     if (usesWorkflowSource(component.type)) return renderSourceSection(component);
     if (isAgricultureComponentType(component.type)) return renderAgricultureDataSourceSection(component);
@@ -3580,6 +4319,7 @@ function renderComponentSettingsSection(component) {
     if (component.type === 'chart') return renderChartSettings(component);
     if (component.type === 'agri-sensor') return renderSensorSettings(component);
     if (isAgriInsightComponentType(component.type)) return renderAgriInsightSettings(component);
+    if (component.type === 'agri-summary') return renderAgriSummarySettings(component);
     if (component.type === 'weather') return renderWeatherSettings(component);
     return '';
 }
@@ -4022,6 +4762,26 @@ function bindComponentPropertyInputs(component, multiComponents = []) {
         if (jsonInput) {
             jsonInput.addEventListener('input', () => {
                 component.props.jsonText = jsonInput.value;
+                renderAll();
+            });
+        }
+        return;
+    }
+
+    if (component.type === 'agri-summary') {
+        const titleInput = document.getElementById('agriSummaryTitleInput');
+        const textInput = document.getElementById('agriSummaryTextInput');
+
+        if (titleInput) {
+            titleInput.addEventListener('input', () => {
+                component.props.title = titleInput.value;
+                renderStage();
+            });
+        }
+
+        if (textInput) {
+            textInput.addEventListener('input', () => {
+                component.props.jsonText = textInput.value;
                 renderAll();
             });
         }
@@ -4959,6 +5719,81 @@ function buildPreviewHtml() {
             color: rgba(234, 248, 252, 0.88);
             font-size: 12px;
             line-height: 1.6;
+        }
+        .agri-summary-lead {
+            padding: 14px 16px;
+            border-radius: 16px;
+            background: rgba(230, 249, 242, 0.10);
+            border: 1px solid rgba(194, 236, 229, 0.10);
+            color: #ffffff;
+            font-size: 15px;
+            font-weight: 700;
+            line-height: 1.7;
+        }
+        .agri-summary-secondary {
+            color: rgba(229, 246, 249, 0.86);
+            font-size: 12px;
+            line-height: 1.6;
+        }
+        .agri-summary-metric-grid {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 10px;
+        }
+        .agri-summary-metric-card {
+            display: flex;
+            flex-direction: column;
+            gap: 5px;
+            padding: 12px;
+            border-radius: 16px;
+            background: rgba(230, 249, 242, 0.08);
+            border: 1px solid rgba(194, 236, 229, 0.10);
+        }
+        .agri-summary-metric-label {
+            color: rgba(219, 243, 248, 0.76);
+            font-size: 11px;
+        }
+        .agri-summary-metric-value {
+            color: #ffffff;
+            font-size: 19px;
+            font-weight: 800;
+            line-height: 1.3;
+            word-break: break-word;
+        }
+        .agri-summary-sections { display: grid; gap: 10px; }
+        .agri-summary-section {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            padding: 12px;
+            border-radius: 16px;
+            background: rgba(230, 249, 242, 0.06);
+            border: 1px solid rgba(194, 236, 229, 0.08);
+        }
+        .agri-summary-section-title {
+            color: #c2ece5;
+            font-size: 11px;
+            font-weight: 700;
+            letter-spacing: 0.04em;
+        }
+        .agri-summary-item-list { display: grid; gap: 8px; }
+        .agri-summary-item {
+            position: relative;
+            padding-left: 14px;
+            color: rgba(234, 248, 252, 0.88);
+            font-size: 12px;
+            line-height: 1.6;
+        }
+        .agri-summary-item::before {
+            content: '';
+            position: absolute;
+            left: 0;
+            top: 0.7em;
+            width: 6px;
+            height: 6px;
+            border-radius: 999px;
+            background: linear-gradient(90deg, #34d399 0%, #38bdf8 100%);
+            transform: translateY(-50%);
         }
         .agri-kpi-value.agri-kpi-small { font-size: 16px; }
         .agri-kpi-meta { color: rgba(201, 233, 240, 0.82); font-size: 11px; }
