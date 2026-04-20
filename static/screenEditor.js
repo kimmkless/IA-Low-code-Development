@@ -167,6 +167,8 @@ const refs = {
     saveLocalBtn: document.getElementById('saveScreenLocalBtn'),
     saveCloudBtn: document.getElementById('saveScreenCloudBtn'),
     downloadCloudBtn: document.getElementById('downloadScreenCloudBtn'),
+    fileMenuRoot: document.getElementById('screenFileMenu'),
+    fileMenuBtn: document.getElementById('screenFileMenuBtn'),
     projectMenuRoot: document.getElementById('screenProjectMenu'),
     projectMenuBtn: document.getElementById('screenProjectMenuBtn'),
     backgroundConfigBtn: document.getElementById('screenBackgroundConfigBtn'),
@@ -184,6 +186,7 @@ const refs = {
     resizeModeBtn: document.getElementById('screenResizeModeBtn'),
     bringToFrontBtn: document.getElementById('screenBringToFrontBtn'),
     deleteBtn: document.getElementById('screenDeleteBtn'),
+    statusbar: document.getElementById('screenStatusbar'),
     toolModeLabel: document.getElementById('screenToolModeLabel'),
     zoomOutBtn: document.getElementById('screenZoomOutBtn'),
     zoomResetBtn: document.getElementById('screenZoomResetBtn'),
@@ -387,6 +390,29 @@ function clearStageGuides() {
 
 function hasStageGuides() {
     return stageGuides.vertical.length > 0 || stageGuides.horizontal.length > 0;
+}
+
+function bindHorizontalWheelScroll(container) {
+    if (!container) return;
+    container.addEventListener('wheel', (event) => {
+        if (event.ctrlKey || event.metaKey) return;
+        if (container.scrollWidth <= container.clientWidth) return;
+
+        const deltaX = Number(event.deltaX) || 0;
+        const deltaY = Number(event.deltaY) || 0;
+        const primaryDelta = Math.abs(deltaX) > Math.abs(deltaY) ? deltaX : deltaY;
+        if (!primaryDelta) return;
+
+        const isScrollingLeft = primaryDelta < 0;
+        const isScrollingRight = primaryDelta > 0;
+        const atLeft = container.scrollLeft <= 0;
+        const atRight = Math.ceil(container.scrollLeft + container.clientWidth) >= container.scrollWidth;
+
+        if ((isScrollingLeft && atLeft) || (isScrollingRight && atRight)) return;
+
+        event.preventDefault();
+        container.scrollLeft += primaryDelta;
+    }, { passive: false });
 }
 
 function getStageSnapTargets(excludedIds = []) {
@@ -5871,6 +5897,8 @@ function finishBoxSelection() {
 }
 
 function bindCanvasStatusBar() {
+    bindHorizontalWheelScroll(refs.statusbar);
+
     if (refs.selectAllBtn) {
         refs.selectAllBtn.addEventListener('click', selectAllComponents);
     }
@@ -6866,21 +6894,49 @@ function initializeProject() {
     setCurrentScreenProject(null);
 }
 
-function setProjectMenuOpen(open) {
-    if (!refs.projectMenuRoot || !refs.projectMenuBtn) return;
+function setTopbarMenuOpen(menuRoot, menuBtn, open) {
+    if (!menuRoot || !menuBtn) return;
     const nextOpen = Boolean(open);
-    refs.projectMenuRoot.classList.toggle('open', nextOpen);
-    refs.projectMenuBtn.setAttribute('aria-expanded', nextOpen ? 'true' : 'false');
+    menuRoot.classList.toggle('open', nextOpen);
+    menuBtn.setAttribute('aria-expanded', nextOpen ? 'true' : 'false');
+}
+
+function closeAllTopbarMenus() {
+    setTopbarMenuOpen(refs.fileMenuRoot, refs.fileMenuBtn, false);
+    setTopbarMenuOpen(refs.projectMenuRoot, refs.projectMenuBtn, false);
 }
 
 function bindTopbarActions() {
+    [
+        refs.openLocalBtn,
+        refs.saveLocalBtn,
+        refs.saveCloudBtn,
+        refs.downloadCloudBtn,
+        refs.importBtn,
+        refs.exportBtn,
+        refs.backgroundConfigBtn
+    ].forEach(button => {
+        button?.addEventListener('click', () => {
+            closeAllTopbarMenus();
+        });
+    });
+
+    refs.fileMenuBtn?.addEventListener('click', (event) => {
+        event.stopPropagation();
+        const willOpen = !refs.fileMenuRoot?.classList.contains('open');
+        closeAllTopbarMenus();
+        setTopbarMenuOpen(refs.fileMenuRoot, refs.fileMenuBtn, willOpen);
+    });
+
     refs.projectMenuBtn?.addEventListener('click', (event) => {
         event.stopPropagation();
-        setProjectMenuOpen(!refs.projectMenuRoot?.classList.contains('open'));
+        const willOpen = !refs.projectMenuRoot?.classList.contains('open');
+        closeAllTopbarMenus();
+        setTopbarMenuOpen(refs.projectMenuRoot, refs.projectMenuBtn, willOpen);
     });
 
     refs.backgroundConfigBtn?.addEventListener('click', () => {
-        setProjectMenuOpen(false);
+        closeAllTopbarMenus();
         openPageBackgroundConfigDialog().catch((error) => {
             window.alert(error?.message || '打开背景画布配置失败。');
         });
@@ -6934,14 +6990,13 @@ function bindTopbarActions() {
     refs.runBtn.addEventListener('click', runPreview);
 
     document.addEventListener('click', (event) => {
-        if (!refs.projectMenuRoot) return;
-        if (refs.projectMenuRoot.contains(event.target)) return;
-        setProjectMenuOpen(false);
+        if (refs.fileMenuRoot?.contains(event.target) || refs.projectMenuRoot?.contains(event.target)) return;
+        closeAllTopbarMenus();
     });
 
     document.addEventListener('keydown', (event) => {
         if (event.key === 'Escape') {
-            setProjectMenuOpen(false);
+            closeAllTopbarMenus();
         }
     });
 

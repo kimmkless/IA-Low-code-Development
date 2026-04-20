@@ -186,6 +186,7 @@ body {
     flex: 1;
     min-height: 0;
     display: grid;
+    grid-template-areas: "components canvas properties";
     grid-template-columns: 280px minmax(0, 1fr) 320px;
     gap: 18px;
 }
@@ -204,6 +205,18 @@ body {
 .properties-panel {
     display: flex;
     flex-direction: column;
+}
+
+.components-panel {
+    grid-area: components;
+}
+
+.canvas-panel {
+    grid-area: canvas;
+}
+
+.properties-panel {
+    grid-area: properties;
 }
 
 .panel-header {
@@ -281,12 +294,37 @@ body {
 }
 
 .screen-statusbar {
+    display: flex;
     align-items: center;
-    justify-content: space-between;
+    justify-content: flex-start;
     padding: 12px 14px;
     border-radius: 18px;
     background: linear-gradient(135deg, rgba(243, 248, 251, 0.98), rgba(232, 241, 246, 0.98));
     border: 1px solid rgba(36, 90, 115, 0.10);
+    gap: 14px;
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    overflow-y: hidden;
+    scrollbar-width: thin;
+    scrollbar-color: rgba(36, 90, 115, 0.35) transparent;
+    -webkit-overflow-scrolling: touch;
+}
+
+.screen-statusbar::-webkit-scrollbar {
+    height: 10px;
+}
+
+.screen-statusbar::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+.screen-statusbar::-webkit-scrollbar-thumb {
+    border-radius: 999px;
+    background: rgba(36, 90, 115, 0.28);
+}
+
+.screen-statusbar::-webkit-scrollbar-thumb:hover {
+    background: rgba(36, 90, 115, 0.40);
 }
 
 .statusbar-left,
@@ -295,12 +333,17 @@ body {
     display: flex;
     align-items: center;
     gap: 10px;
-    flex-wrap: wrap;
+    flex-wrap: nowrap;
+    flex: 0 0 auto;
+    min-width: max-content;
 }
 
 .statusbar-tools {
-    flex: 1;
-    justify-content: center;
+    justify-content: flex-start;
+}
+
+.statusbar-right {
+    margin-left: auto;
 }
 
 .statusbar-btn {
@@ -336,6 +379,7 @@ body {
     font-weight: 700;
     cursor: pointer;
     transition: transform 0.16s ease, box-shadow 0.16s ease, background 0.16s ease, opacity 0.16s ease;
+    white-space: nowrap;
 }
 
 .statusbar-action-btn:hover:not(:disabled) {
@@ -373,6 +417,7 @@ body {
     color: #245a73;
     font-size: 12px;
     font-weight: 700;
+    white-space: nowrap;
 }
 
 .toolbar-pill {
@@ -384,6 +429,7 @@ body {
     color: #245a73;
     font-size: 12px;
     font-weight: 700;
+    white-space: nowrap;
 }
 
 .toolbar-pill.subtle {
@@ -1571,6 +1617,7 @@ body {
 
 @media (max-width: 1280px) {
     .editor-layout {
+        grid-template-areas: "components canvas properties";
         grid-template-columns: 250px minmax(0, 1fr) 300px;
     }
 }
@@ -1585,6 +1632,11 @@ body {
         align-items: flex-start;
     }
 
+    .topbar-actions {
+        width: 100%;
+        justify-content: flex-start;
+    }
+
     .screen-statusbar {
         align-items: flex-start;
     }
@@ -1594,11 +1646,108 @@ body {
     }
 
     .editor-layout {
-        grid-template-columns: 1fr;
+        grid-template-areas:
+            "canvas canvas"
+            "components properties";
+        grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+        align-items: start;
     }
 
     .components-panel,
     .properties-panel {
         min-height: auto;
+    }
+
+    .canvas-panel {
+        min-height: 620px;
+    }
+
+    .canvas-area {
+        min-height: 460px;
+    }
+}
+
+@media (max-width: 760px) {
+    .screen-shell {
+        padding: 12px;
+        gap: 14px;
+    }
+
+    .topbar-left {
+        width: 100%;
+        flex-wrap: wrap;
+        align-items: flex-start;
+    }
+
+    .screen-topbar {
+        padding: 16px 18px;
+        border-radius: 20px;
+    }
+
+    .screen-topbar h1 {
+        font-size: 26px;
+    }
+
+    .topbar-actions {
+        gap: 8px;
+    }
+
+    .editor-layout {
+        grid-template-areas:
+            "canvas"
+            "components"
+            "properties";
+        grid-template-columns: 1fr;
+        gap: 14px;
+    }
+
+    .canvas-panel {
+        min-height: 520px;
+    }
+
+    .canvas-area {
+        min-height: 380px;
+        padding: 18px;
+    }
+
+    .components-panel,
+    .properties-panel {
+        min-height: auto;
+    }
+}
+
+@media (max-width: 520px) {
+    .screen-shell {
+        padding: 10px;
+    }
+
+    .screen-topbar {
+        padding: 14px 14px 16px;
+    }
+
+    .menu-back-btn,
+    .topbar-btn {
+        width: 100%;
+        justify-content: center;
+    }
+
+    .screen-menu-item {
+        width: 100%;
+    }
+
+    .screen-submenu {
+        left: 0;
+        right: 0;
+        min-width: 0;
+    }
+
+    .canvas-panel {
+        min-height: 480px;
+        padding: 12px;
+    }
+
+    .canvas-area {
+        min-height: 340px;
+        padding: 14px;
     }
 }

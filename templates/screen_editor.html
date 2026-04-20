@@ -20,18 +20,23 @@
             </div>
         </div>
         <div class="topbar-actions">
+            <div class="screen-menu-item" id="screenFileMenu">
+                <button type="button" class="topbar-btn menu-trigger" id="screenFileMenuBtn" aria-haspopup="true" aria-expanded="false">文件</button>
+                <div class="screen-submenu" role="menu" aria-label="文件菜单">
+                    <button type="button" class="screen-submenu-item" id="openScreenLocalBtn">打开到本地</button>
+                    <button type="button" class="screen-submenu-item" id="saveScreenLocalBtn">保存到本地</button>
+                    <button type="button" class="screen-submenu-item" id="saveScreenCloudBtn">保存到数据库</button>
+                    <button type="button" class="screen-submenu-item" id="downloadScreenCloudBtn">从数据库下载</button>
+                    <button type="button" class="screen-submenu-item" id="importScreenBtn">导入 JSON</button>
+                    <button type="button" class="screen-submenu-item" id="exportScreenBtn">导出 JSON</button>
+                </div>
+            </div>
             <div class="screen-menu-item" id="screenProjectMenu">
                 <button type="button" class="topbar-btn menu-trigger" id="screenProjectMenuBtn" aria-haspopup="true" aria-expanded="false">项目</button>
                 <div class="screen-submenu" role="menu" aria-label="项目菜单">
                     <button type="button" class="screen-submenu-item" id="screenBackgroundConfigBtn">背景画布</button>
                 </div>
             </div>
-            <button type="button" class="topbar-btn" id="openScreenLocalBtn">打开到本地</button>
-            <button type="button" class="topbar-btn" id="saveScreenLocalBtn">保存到本地</button>
-            <button type="button" class="topbar-btn" id="saveScreenCloudBtn">保存到数据库</button>
-            <button type="button" class="topbar-btn" id="downloadScreenCloudBtn">从数据库下载</button>
-            <button type="button" class="topbar-btn" id="importScreenBtn">导入 JSON</button>
-            <button type="button" class="topbar-btn" id="exportScreenBtn">导出 JSON</button>
             <button type="button" class="topbar-btn primary" id="runScreenBtn">运行生成网页</button>
             <div class="shared-auth-controls" id="screenAccountControls"></div>
         </div>
@@ -45,7 +50,7 @@
         </aside>
 
         <section class="canvas-panel">
-            <div class="canvas-toolbar screen-statusbar">
+            <div class="canvas-toolbar screen-statusbar" id="screenStatusbar">
                 <div class="statusbar-tools">
                     <button type="button" class="statusbar-action-btn" id="screenSelectAllBtn">全选</button>
                     <button type="button" class="statusbar-action-btn" id="screenCopyBtn">复制</button>
