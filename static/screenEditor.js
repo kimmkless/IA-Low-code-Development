@@ -27,6 +27,50 @@ const DEFAULT_CHART_AGGREGATION_LIMIT = 60;
 const MIN_CHART_AGGREGATION_LIMIT = 8;
 const MAX_CHART_AGGREGATION_LIMIT = 240;
 const CHART_COLORS = ['#2f80ed', '#56ccf2', '#6fcf97', '#f2c94c', '#f2994a', '#eb5757', '#9b51e0', '#27ae60'];
+const ALIGN_SNAP_THRESHOLD = 8;
+const PAGE_BACKGROUND_PRESETS = Object.freeze([
+    {
+        id: 'soft-grid',
+        name: '柔和网格',
+        description: '浅色演示页，适合通用汇报和明亮风格。',
+        background: 'linear-gradient(rgba(101, 126, 152, 0.08) 1px, transparent 1px) center / 24px 24px, linear-gradient(90deg, rgba(101, 126, 152, 0.08) 1px, transparent 1px) center / 24px 24px, linear-gradient(145deg, #f8fbfd 0%, #edf3f7 100%)'
+    },
+    {
+        id: 'deep-aurora',
+        name: '深海极光',
+        description: '科技感更强，适合夜间大屏和数据驾驶舱。',
+        background: 'radial-gradient(circle at 18% 18%, rgba(67, 187, 255, 0.25), transparent 22%), radial-gradient(circle at 82% 16%, rgba(16, 185, 129, 0.22), transparent 24%), linear-gradient(145deg, #09131c 0%, #102436 42%, #153b34 100%)'
+    },
+    {
+        id: 'greenhouse',
+        name: '温室青绿',
+        description: '农业项目更贴切，适合环境、产量和决策展示。',
+        background: 'radial-gradient(circle at 20% 20%, rgba(110, 231, 183, 0.22), transparent 24%), radial-gradient(circle at 78% 14%, rgba(34, 197, 94, 0.16), transparent 26%), linear-gradient(140deg, #081915 0%, #0d2b22 42%, #1d4d3d 100%)'
+    },
+    {
+        id: 'blueprint',
+        name: '蓝图网格',
+        description: '带工程底图感，适合技术路线和结构页面。',
+        background: 'linear-gradient(rgba(191, 219, 254, 0.10) 1px, transparent 1px) center / 28px 28px, linear-gradient(90deg, rgba(191, 219, 254, 0.10) 1px, transparent 1px) center / 28px 28px, linear-gradient(145deg, #081120 0%, #102a43 50%, #1b4965 100%)'
+    },
+    {
+        id: 'sunrise',
+        name: '晨曦暖光',
+        description: '更偏展示型，适合成果页和答辩封面页。',
+        background: 'radial-gradient(circle at 22% 18%, rgba(255, 215, 128, 0.30), transparent 22%), radial-gradient(circle at 78% 16%, rgba(255, 159, 67, 0.18), transparent 24%), linear-gradient(145deg, #fff8ed 0%, #fde7c7 42%, #f7d8a8 100%)'
+    }
+]);
+const DEFAULT_BACKGROUND_PRESET_ID = 'soft-grid';
+const DEFAULT_PAGE_BACKGROUND_CONFIG = Object.freeze({
+    mode: 'solid',
+    color: DEFAULT_PAGE.background,
+    presetId: DEFAULT_BACKGROUND_PRESET_ID,
+    imageUrl: '',
+    imageFit: 'cover',
+    overlayColor: '#0f172a',
+    overlayOpacity: 24,
+    customCss: ''
+});
 
 const COMPONENT_LIBRARY = [
     {
@@ -108,7 +152,7 @@ const state = {
     nextId: 1,
     selectedId: null,
     selectedIds: new Set(),
-    page: { ...DEFAULT_PAGE },
+    page: createDefaultPageState(),
     zoom: 1,
     activeCanvasTool: CANVAS_TOOL_MOVE
 };
@@ -123,6 +167,9 @@ const refs = {
     saveLocalBtn: document.getElementById('saveScreenLocalBtn'),
     saveCloudBtn: document.getElementById('saveScreenCloudBtn'),
     downloadCloudBtn: document.getElementById('downloadScreenCloudBtn'),
+    projectMenuRoot: document.getElementById('screenProjectMenu'),
+    projectMenuBtn: document.getElementById('screenProjectMenuBtn'),
+    backgroundConfigBtn: document.getElementById('screenBackgroundConfigBtn'),
     importBtn: document.getElementById('importScreenBtn'),
     exportBtn: document.getElementById('exportScreenBtn'),
     runBtn: document.getElementById('runScreenBtn'),
@@ -154,6 +201,7 @@ let boxSelectionOverlay = null;
 let componentClipboardPayload = null;
 let componentClipboardPasteCount = 0;
 let currentScreenProject = null;
+let stageGuides = { vertical: [], horizontal: [] };
 
 function formatDatePart(value) {
     return String(value).padStart(2, '0');
@@ -202,6 +250,194 @@ function clamp(value, min, max) {
 
 function clampCanvasZoom(value) {
     return clamp(Number(value) || 1, MIN_CANVAS_ZOOM, MAX_CANVAS_ZOOM);
+}
+
+function getPageBackgroundPresetById(presetId) {
+    return PAGE_BACKGROUND_PRESETS.find(item => item.id === presetId) || PAGE_BACKGROUND_PRESETS[0];
+}
+
+function isSimpleBackgroundColor(value) {
+    const text = String(value || '').trim();
+    return /^#([\da-f]{3}|[\da-f]{6})$/i.test(text);
+}
+
+function normalizePageBackgroundConfig(rawConfig, fallbackBackground = DEFAULT_PAGE.background) {
+    const defaults = {
+        ...DEFAULT_PAGE_BACKGROUND_CONFIG,
+        color: isSimpleBackgroundColor(fallbackBackground) ? fallbackBackground : DEFAULT_PAGE.background
+    };
+
+    if (!rawConfig || typeof rawConfig !== 'object') {
+        if (isSimpleBackgroundColor(fallbackBackground)) {
+            return { ...defaults, mode: 'solid', color: fallbackBackground };
+        }
+        return { ...defaults, mode: 'custom', customCss: String(fallbackBackground || DEFAULT_PAGE.background) };
+    }
+
+    const mode = ['solid', 'preset', 'image', 'custom'].includes(rawConfig.mode)
+        ? rawConfig.mode
+        : (isSimpleBackgroundColor(fallbackBackground) ? 'solid' : 'custom');
+
+    return {
+        mode,
+        color: isSimpleBackgroundColor(rawConfig.color) ? rawConfig.color : defaults.color,
+        presetId: getPageBackgroundPresetById(rawConfig.presetId || defaults.presetId).id,
+        imageUrl: typeof rawConfig.imageUrl === 'string' ? rawConfig.imageUrl.trim() : '',
+        imageFit: rawConfig.imageFit === 'contain' ? 'contain' : 'cover',
+        overlayColor: isSimpleBackgroundColor(rawConfig.overlayColor) ? rawConfig.overlayColor : defaults.overlayColor,
+        overlayOpacity: clamp(Number(rawConfig.overlayOpacity) || defaults.overlayOpacity, 0, 90),
+        customCss: typeof rawConfig.customCss === 'string' ? rawConfig.customCss.trim() : ''
+    };
+}
+
+function escapeCssUrl(url) {
+    return String(url || '')
+        .replace(/\\/g, '\\\\')
+        .replace(/'/g, "\\'")
+        .replace(/\r?\n/g, '');
+}
+
+function hexToRgba(color, opacity = 1) {
+    const normalized = String(color || '').trim().replace('#', '');
+    const safeOpacity = clamp(Number(opacity) || 0, 0, 1);
+    if (normalized.length === 3) {
+        const [r, g, b] = normalized.split('').map(item => parseInt(item + item, 16));
+        return `rgba(${r}, ${g}, ${b}, ${safeOpacity})`;
+    }
+    if (normalized.length === 6) {
+        const r = parseInt(normalized.slice(0, 2), 16);
+        const g = parseInt(normalized.slice(2, 4), 16);
+        const b = parseInt(normalized.slice(4, 6), 16);
+        return `rgba(${r}, ${g}, ${b}, ${safeOpacity})`;
+    }
+    return `rgba(15, 23, 42, ${safeOpacity})`;
+}
+
+function buildPageBackgroundStyle(config) {
+    const normalized = normalizePageBackgroundConfig(config);
+    if (normalized.mode === 'preset') {
+        return getPageBackgroundPresetById(normalized.presetId).background;
+    }
+
+    if (normalized.mode === 'image' && normalized.imageUrl) {
+        const overlay = hexToRgba(normalized.overlayColor, normalized.overlayOpacity / 100);
+        return `linear-gradient(${overlay}, ${overlay}), url('${escapeCssUrl(normalized.imageUrl)}') center / ${normalized.imageFit} no-repeat ${normalized.color}`;
+    }
+
+    if (normalized.mode === 'custom') {
+        return normalized.customCss || DEFAULT_PAGE.background;
+    }
+
+    return normalized.color || DEFAULT_PAGE.background;
+}
+
+function createDefaultPageState() {
+    const backgroundConfig = normalizePageBackgroundConfig(null, DEFAULT_PAGE.background);
+    return {
+        width: DEFAULT_PAGE.width,
+        height: DEFAULT_PAGE.height,
+        background: buildPageBackgroundStyle(backgroundConfig),
+        backgroundConfig
+    };
+}
+
+function syncPageBackgroundFromConfig() {
+    state.page.backgroundConfig = normalizePageBackgroundConfig(state.page.backgroundConfig, state.page.background);
+    state.page.background = buildPageBackgroundStyle(state.page.backgroundConfig);
+}
+
+function describePageBackgroundConfig(config) {
+    const normalized = normalizePageBackgroundConfig(config);
+    if (normalized.mode === 'preset') {
+        return `模板背景 · ${getPageBackgroundPresetById(normalized.presetId).name}`;
+    }
+    if (normalized.mode === 'image') {
+        return normalized.imageUrl
+            ? `图片背景 · ${normalized.imageFit === 'contain' ? '完整显示' : '铺满裁切'}`
+            : '图片背景 · 尚未设置图片';
+    }
+    if (normalized.mode === 'custom') {
+        return '高级自定义背景 CSS';
+    }
+    return `纯色背景 · ${normalized.color}`;
+}
+
+function escapeStyleTagContent(value) {
+    return String(value || '').replace(/<\/style/gi, '<\\/style');
+}
+
+function normalizeGuideValues(values) {
+    return Array.from(new Set(
+        (Array.isArray(values) ? values : [])
+            .map(item => Math.round(Number(item)))
+            .filter(item => Number.isFinite(item))
+    ));
+}
+
+function setStageGuides(nextGuides = {}) {
+    stageGuides = {
+        vertical: normalizeGuideValues(nextGuides.vertical),
+        horizontal: normalizeGuideValues(nextGuides.horizontal)
+    };
+}
+
+function clearStageGuides() {
+    setStageGuides();
+}
+
+function hasStageGuides() {
+    return stageGuides.vertical.length > 0 || stageGuides.horizontal.length > 0;
+}
+
+function getStageSnapTargets(excludedIds = []) {
+    const excluded = new Set((Array.isArray(excludedIds) ? excludedIds : []).map(id => Number(id)));
+    const vertical = [
+        { value: 0, priority: 2 },
+        { value: state.page.width / 2, priority: 1 },
+        { value: state.page.width, priority: 2 }
+    ];
+    const horizontal = [
+        { value: 0, priority: 2 },
+        { value: state.page.height / 2, priority: 1 },
+        { value: state.page.height, priority: 2 }
+    ];
+
+    state.components.forEach(component => {
+        if (!component || excluded.has(component.id)) return;
+        vertical.push(
+            { value: component.x, priority: 0 },
+            { value: component.x + component.width / 2, priority: 0 },
+            { value: component.x + component.width, priority: 0 }
+        );
+        horizontal.push(
+            { value: component.y, priority: 0 },
+            { value: component.y + component.height / 2, priority: 0 },
+            { value: component.y + component.height, priority: 0 }
+        );
+    });
+
+    return { vertical, horizontal };
+}
+
+function findBestSnap(subjectValues, targets, threshold = ALIGN_SNAP_THRESHOLD) {
+    let best = null;
+    subjectValues.forEach(subject => {
+        targets.forEach(target => {
+            const delta = target.value - subject.value;
+            const distance = Math.abs(delta);
+            if (distance > threshold) return;
+            if (!best || distance < best.distance || (distance === best.distance && (target.priority || 0) < (best.priority || 0))) {
+                best = {
+                    delta,
+                    distance,
+                    subjectValue: subject.value,
+                    targetValue: target.value,
+                    priority: target.priority || 0
+                };
+            }
+        });
+    });
+    return best;
 }
 
 function getTextJustifyContent(textAlign) {
@@ -3318,10 +3554,15 @@ function loadScreenData(data) {
 
     state.components.clear();
     state.nextId = 1;
+    const backgroundConfig = normalizePageBackgroundConfig(
+        data.page?.backgroundConfig,
+        typeof data.page?.background === 'string' ? data.page.background : DEFAULT_PAGE.background
+    );
     state.page = {
         width: Number.isFinite(Number(data.page?.width)) ? Number(data.page.width) : DEFAULT_PAGE.width,
         height: Number.isFinite(Number(data.page?.height)) ? Number(data.page.height) : DEFAULT_PAGE.height,
-        background: typeof data.page?.background === 'string' ? data.page.background : DEFAULT_PAGE.background
+        background: buildPageBackgroundStyle(backgroundConfig),
+        backgroundConfig
     };
 
     let maxId = 0;
@@ -3344,7 +3585,12 @@ function loadScreenData(data) {
 
 function exportScreenData() {
     return {
-        page: { ...state.page },
+        page: {
+            width: state.page.width,
+            height: state.page.height,
+            background: state.page.background,
+            backgroundConfig: cloneData(state.page.backgroundConfig)
+        },
         components: Array.from(state.components.values()).map(component => ({
             id: component.id,
             type: component.type,
@@ -3700,7 +3946,7 @@ function updateStageAppearance() {
     const zoom = clampCanvasZoom(state.zoom);
     refs.stage.style.width = `${state.page.width}px`;
     refs.stage.style.height = `${state.page.height}px`;
-    refs.stage.style.background = state.page.background;
+    refs.stage.style.background = buildPageBackgroundStyle(state.page.backgroundConfig);
     refs.stage.style.transform = `scale(${zoom})`;
     refs.viewport.style.width = `${state.page.width * zoom}px`;
     refs.viewport.style.height = `${state.page.height * zoom}px`;
@@ -3773,7 +4019,7 @@ function renderLibrary() {
 function renderStage() {
     updateStageAppearance();
 
-    const markup = Array.from(state.components.values()).map(component => {
+    const componentMarkup = Array.from(state.components.values()).map(component => {
         const commonStyle = [
             `left:${component.x}px`,
             `top:${component.y}px`,
@@ -3855,7 +4101,12 @@ function renderStage() {
         `;
     }).join('');
 
-    refs.stage.innerHTML = markup;
+    const guideMarkup = [
+        ...stageGuides.vertical.map(value => `<div class="screen-align-guide vertical" style="left:${value}px;"></div>`),
+        ...stageGuides.horizontal.map(value => `<div class="screen-align-guide horizontal" style="top:${value}px;"></div>`)
+    ].join('');
+
+    refs.stage.innerHTML = `${componentMarkup}${guideMarkup}`;
 }
 
 function renderSourceSection(component) {
@@ -4453,7 +4704,7 @@ function renderProperties() {
         refs.propContent.innerHTML = `
             <section class="prop-section">
                 <h3>页面设置</h3>
-                <p class="prop-hint">未选中组件时，可以直接配置大屏页面尺寸与背景颜色。</p>
+                <p class="prop-hint">未选中组件时，可以直接配置大屏页面尺寸。背景画布支持模板、图片和自定义样式，统一放在顶部“项目”菜单里管理。</p>
                 <div class="prop-grid">
                     <div>
                         <label class="prop-label" for="pageWidthInput">画布宽度</label>
@@ -4464,14 +4715,15 @@ function renderProperties() {
                         <input class="prop-input" id="pageHeightInput" type="number" min="240" max="2160" value="${state.page.height}">
                     </div>
                 </div>
-                <div>
-                    <label class="prop-label" for="pageBackgroundInput">背景颜色</label>
-                    <input class="prop-input" id="pageBackgroundInput" type="color" value="${state.page.background}">
+                <div class="page-bg-summary">
+                    <label class="prop-label">背景画布</label>
+                    <div class="source-preview-box">${escapeHtml(describePageBackgroundConfig(state.page.backgroundConfig))}</div>
+                    <button class="page-bg-config-btn" id="openPageBackgroundConfigBtn" type="button">打开背景画布配置</button>
                 </div>
             </section>
             <section class="prop-section">
                 <h3>使用方式</h3>
-                <p class="prop-hint">从左侧拖拽组件到画布中。支持 Ctrl+点击多选组件，也支持在空白区域按住左键拖动进行框选；多选时右侧会显示所有选中组件的属性。单选组件后可直接拖动四角控制点缩放，也可以通过顶部“组件缩放”按钮切换缩放模式后在画布中拖动调整尺寸。除了文本、图片和图表外，还支持智慧农业专用的传感器、环境抽象模型、气候预测、产量预测和辅助决策组件。</p>
+                <p class="prop-hint">从左侧拖拽组件到画布中。支持 Ctrl+点击多选组件，也支持在空白区域按住左键拖动进行框选；多选时右侧会显示所有选中组件的属性。移动或缩放组件时，靠近其他组件边缘或中心线会出现对齐参考线并自动吸附。单选组件后可直接拖动四角控制点缩放，也可以通过顶部“组件缩放”按钮切换缩放模式后在画布中拖动调整尺寸。</p>
             </section>
         `;
         bindPagePropertyInputs();
@@ -4525,7 +4777,7 @@ function normalizeColorValue(color) {
 function bindPagePropertyInputs() {
     const widthInput = document.getElementById('pageWidthInput');
     const heightInput = document.getElementById('pageHeightInput');
-    const backgroundInput = document.getElementById('pageBackgroundInput');
+    const backgroundConfigBtn = document.getElementById('openPageBackgroundConfigBtn');
 
     if (widthInput) {
         widthInput.addEventListener('input', () => {
@@ -4543,13 +4795,208 @@ function bindPagePropertyInputs() {
         heightInput.addEventListener('change', renderProperties);
     }
 
-    if (backgroundInput) {
-        backgroundInput.addEventListener('input', () => {
-            state.page.background = backgroundInput.value || DEFAULT_PAGE.background;
-            renderStage();
+    if (backgroundConfigBtn) {
+        backgroundConfigBtn.addEventListener('click', () => {
+            openPageBackgroundConfigDialog().catch((error) => {
+                window.alert(error?.message || '打开背景画布配置失败。');
+            });
         });
-        backgroundInput.addEventListener('change', renderProperties);
     }
+}
+
+function updatePageBackgroundDialog(bodyEl, draftConfig) {
+    const normalized = normalizePageBackgroundConfig(draftConfig, state.page.background);
+    const preview = bodyEl.querySelector('[data-page-bg-preview]');
+    if (preview) {
+        preview.style.background = buildPageBackgroundStyle(normalized);
+    }
+
+    bodyEl.querySelectorAll('[data-page-bg-mode]').forEach(button => {
+        const active = button.getAttribute('data-page-bg-mode') === normalized.mode;
+        button.classList.toggle('active', active);
+        button.setAttribute('aria-pressed', active ? 'true' : 'false');
+    });
+
+    bodyEl.querySelectorAll('[data-page-bg-section]').forEach(section => {
+        const active = section.getAttribute('data-page-bg-section') === normalized.mode;
+        section.classList.toggle('active', active);
+    });
+
+    bodyEl.querySelectorAll('[data-page-bg-preset]').forEach(card => {
+        card.classList.toggle('active', card.getAttribute('data-page-bg-preset') === normalized.presetId);
+    });
+}
+
+function renderPageBackgroundDialog(bodyEl, draftConfig) {
+    const normalized = normalizePageBackgroundConfig(draftConfig, state.page.background);
+    bodyEl.innerHTML = `
+        <div class="page-bg-dialog">
+            <div class="page-bg-preview" data-page-bg-preview></div>
+            <div class="page-bg-mode-tabs">
+                <button type="button" class="page-bg-mode-btn" data-page-bg-mode="solid">纯色</button>
+                <button type="button" class="page-bg-mode-btn" data-page-bg-mode="preset">背景模板</button>
+                <button type="button" class="page-bg-mode-btn" data-page-bg-mode="image">背景图片</button>
+                <button type="button" class="page-bg-mode-btn" data-page-bg-mode="custom">高级自定义</button>
+            </div>
+
+            <div class="page-bg-section" data-page-bg-section="solid">
+                <div class="shared-field">
+                    <label for="pageBgColorInput">背景颜色</label>
+                    <input class="shared-input" id="pageBgColorInput" type="color" value="${escapeHtml(normalized.color)}">
+                </div>
+                <div class="page-bg-hint">适合简洁页面或作为图片背景的底色。</div>
+            </div>
+
+            <div class="page-bg-section" data-page-bg-section="preset">
+                <div class="page-bg-preset-grid">
+                    ${PAGE_BACKGROUND_PRESETS.map(preset => `
+                        <button type="button" class="page-bg-preset-card" data-page-bg-preset="${escapeHtml(preset.id)}">
+                            <div class="page-bg-preset-swatch" style="background:${escapeHtml(preset.background)};"></div>
+                            <strong>${escapeHtml(preset.name)}</strong>
+                            <span>${escapeHtml(preset.description)}</span>
+                        </button>
+                    `).join('')}
+                </div>
+            </div>
+
+            <div class="page-bg-section" data-page-bg-section="image">
+                <div class="shared-field">
+                    <label for="pageBgImageUrlInput">图片地址</label>
+                    <input class="shared-input" id="pageBgImageUrlInput" type="text" value="${escapeHtml(normalized.imageUrl)}" placeholder="/static/demo-background.jpg 或 data:image/...">
+                </div>
+                <div class="page-bg-inline-actions">
+                    <label class="page-bg-upload-btn" for="pageBgImageUploadInput">上传背景图片
+                        <input id="pageBgImageUploadInput" type="file" accept="image/*">
+                    </label>
+                </div>
+                <div class="shared-form-grid">
+                    <div class="shared-field">
+                        <label for="pageBgImageFitInput">铺满方式</label>
+                        <select class="prop-select" id="pageBgImageFitInput">
+                            <option value="cover" ${normalized.imageFit === 'cover' ? 'selected' : ''}>cover</option>
+                            <option value="contain" ${normalized.imageFit === 'contain' ? 'selected' : ''}>contain</option>
+                        </select>
+                    </div>
+                    <div class="shared-field">
+                        <label for="pageBgBaseColorInput">底色</label>
+                        <input class="shared-input" id="pageBgBaseColorInput" type="color" value="${escapeHtml(normalized.color)}">
+                    </div>
+                    <div class="shared-field">
+                        <label for="pageBgOverlayColorInput">遮罩颜色</label>
+                        <input class="shared-input" id="pageBgOverlayColorInput" type="color" value="${escapeHtml(normalized.overlayColor)}">
+                    </div>
+                    <div class="shared-field">
+                        <label for="pageBgOverlayOpacityInput">遮罩透明度（0-90）</label>
+                        <input class="shared-input" id="pageBgOverlayOpacityInput" type="number" min="0" max="90" value="${normalized.overlayOpacity}">
+                    </div>
+                </div>
+                <div class="page-bg-hint">上传后会直接保存为项目内可复用的数据地址；也可以手动填写现有图片 URL。</div>
+            </div>
+
+            <div class="page-bg-section" data-page-bg-section="custom">
+                <div class="shared-field">
+                    <label for="pageBgCustomCssInput">CSS 背景值</label>
+                    <textarea class="prop-textarea" id="pageBgCustomCssInput" spellcheck="false" placeholder="例如 linear-gradient(...), url(...)">${escapeHtml(normalized.customCss)}</textarea>
+                </div>
+                <div class="page-bg-hint">保留复杂渐变和高级样式时可使用此模式，内容会直接写入画布的 CSS background。</div>
+            </div>
+        </div>
+    `;
+
+    bodyEl.querySelectorAll('[data-page-bg-mode]').forEach(button => {
+        button.addEventListener('click', () => {
+            draftConfig.mode = button.getAttribute('data-page-bg-mode') || 'solid';
+            updatePageBackgroundDialog(bodyEl, draftConfig);
+        });
+    });
+
+    bodyEl.querySelector('#pageBgColorInput')?.addEventListener('input', (event) => {
+        draftConfig.color = event.target.value || DEFAULT_PAGE.background;
+        draftConfig.mode = 'solid';
+        updatePageBackgroundDialog(bodyEl, draftConfig);
+    });
+
+    bodyEl.querySelectorAll('[data-page-bg-preset]').forEach(card => {
+        card.addEventListener('click', () => {
+            draftConfig.mode = 'preset';
+            draftConfig.presetId = card.getAttribute('data-page-bg-preset') || DEFAULT_BACKGROUND_PRESET_ID;
+            updatePageBackgroundDialog(bodyEl, draftConfig);
+        });
+    });
+
+    bodyEl.querySelector('#pageBgImageUrlInput')?.addEventListener('input', (event) => {
+        draftConfig.imageUrl = String(event.target.value || '').trim();
+        draftConfig.mode = 'image';
+        updatePageBackgroundDialog(bodyEl, draftConfig);
+    });
+
+    bodyEl.querySelector('#pageBgImageFitInput')?.addEventListener('change', (event) => {
+        draftConfig.imageFit = event.target.value === 'contain' ? 'contain' : 'cover';
+        draftConfig.mode = 'image';
+        updatePageBackgroundDialog(bodyEl, draftConfig);
+    });
+
+    bodyEl.querySelector('#pageBgBaseColorInput')?.addEventListener('input', (event) => {
+        draftConfig.color = event.target.value || DEFAULT_PAGE.background;
+        draftConfig.mode = 'image';
+        updatePageBackgroundDialog(bodyEl, draftConfig);
+    });
+
+    bodyEl.querySelector('#pageBgOverlayColorInput')?.addEventListener('input', (event) => {
+        draftConfig.overlayColor = event.target.value || DEFAULT_PAGE_BACKGROUND_CONFIG.overlayColor;
+        draftConfig.mode = 'image';
+        updatePageBackgroundDialog(bodyEl, draftConfig);
+    });
+
+    bodyEl.querySelector('#pageBgOverlayOpacityInput')?.addEventListener('input', (event) => {
+        draftConfig.overlayOpacity = clamp(Number(event.target.value) || 0, 0, 90);
+        draftConfig.mode = 'image';
+        updatePageBackgroundDialog(bodyEl, draftConfig);
+    });
+
+    bodyEl.querySelector('#pageBgCustomCssInput')?.addEventListener('input', (event) => {
+        draftConfig.customCss = String(event.target.value || '');
+        draftConfig.mode = 'custom';
+        updatePageBackgroundDialog(bodyEl, draftConfig);
+    });
+
+    bodyEl.querySelector('#pageBgImageUploadInput')?.addEventListener('change', (event) => {
+        const [file] = event.target.files || [];
+        if (!file) return;
+        const reader = new FileReader();
+        reader.onload = () => {
+            draftConfig.imageUrl = String(reader.result || '');
+            draftConfig.mode = 'image';
+            const urlInput = bodyEl.querySelector('#pageBgImageUrlInput');
+            if (urlInput) urlInput.value = draftConfig.imageUrl;
+            updatePageBackgroundDialog(bodyEl, draftConfig);
+        };
+        reader.readAsDataURL(file);
+    });
+
+    updatePageBackgroundDialog(bodyEl, draftConfig);
+}
+
+async function openPageBackgroundConfigDialog() {
+    const draftConfig = cloneData(normalizePageBackgroundConfig(state.page.backgroundConfig, state.page.background));
+    const result = await showSharedDialog({
+        title: '背景画布',
+        subtitle: '支持纯色、背景模板、背景图片和高级自定义。设置后会同步保存到大屏项目中。',
+        bodyHtml: '<div id="pageBackgroundDialogRoot"></div>',
+        confirmText: '应用背景',
+        cancelText: '取消',
+        onOpen: ({ bodyEl }) => {
+            const root = bodyEl.querySelector('#pageBackgroundDialogRoot');
+            if (!root) return;
+            renderPageBackgroundDialog(root, draftConfig);
+        },
+        onConfirm: () => normalizePageBackgroundConfig(draftConfig, state.page.background)
+    });
+
+    if (!result) return;
+    state.page.backgroundConfig = normalizePageBackgroundConfig(result, state.page.background);
+    syncPageBackgroundFromConfig();
+    renderAll();
 }
 
 function bindComponentPropertyInputs(component, multiComponents = []) {
@@ -5111,8 +5558,111 @@ function constrainComponentToStage(component) {
     component.y = clamp(component.y, 0, Math.max(0, state.page.height - component.height));
 }
 
+function applyResizeEdges(component, left, right, top, bottom) {
+    if (right - left < 40) {
+        if (dragState?.interaction === 'resize-handle' && dragState.handle?.includes('w')) {
+            left = right - 40;
+        } else {
+            right = left + 40;
+        }
+    }
+    if (bottom - top < 40) {
+        if (dragState?.interaction === 'resize-handle' && dragState.handle?.includes('n')) {
+            top = bottom - 40;
+        } else {
+            bottom = top + 40;
+        }
+    }
+    component.x = left;
+    component.y = top;
+    component.width = right - left;
+    component.height = bottom - top;
+    constrainComponentToStage(component);
+}
+
+function getMoveSnapResult(rawDeltaX, rawDeltaY) {
+    if (!dragState?.groupBounds) {
+        return {
+            deltaX: rawDeltaX,
+            deltaY: rawDeltaY,
+            guides: { vertical: [], horizontal: [] }
+        };
+    }
+
+    const targets = getStageSnapTargets(dragState.ids || []);
+    const bounds = dragState.groupBounds;
+    const verticalSnap = findBestSnap([
+        { value: bounds.left + rawDeltaX },
+        { value: bounds.left + rawDeltaX + bounds.width / 2 },
+        { value: bounds.right + rawDeltaX }
+    ], targets.vertical);
+    const horizontalSnap = findBestSnap([
+        { value: bounds.top + rawDeltaY },
+        { value: bounds.top + rawDeltaY + bounds.height / 2 },
+        { value: bounds.bottom + rawDeltaY }
+    ], targets.horizontal);
+
+    return {
+        deltaX: rawDeltaX + (verticalSnap?.delta || 0),
+        deltaY: rawDeltaY + (horizontalSnap?.delta || 0),
+        guides: {
+            vertical: verticalSnap ? [verticalSnap.targetValue] : [],
+            horizontal: horizontalSnap ? [horizontalSnap.targetValue] : []
+        }
+    };
+}
+
+function getResizeSnapResult(componentId, edges, interaction, handle = '') {
+    const targets = getStageSnapTargets([componentId]);
+    let left = edges.left;
+    let right = edges.right;
+    let top = edges.top;
+    let bottom = edges.bottom;
+    const guides = { vertical: [], horizontal: [] };
+
+    const resizeByHandle = interaction === 'resize-handle';
+    const snapLeft = resizeByHandle && handle.includes('w');
+    const snapRight = (!resizeByHandle && interaction === 'resize-tool') || (resizeByHandle && handle.includes('e'));
+    const snapTop = resizeByHandle && handle.includes('n');
+    const snapBottom = (!resizeByHandle && interaction === 'resize-tool') || (resizeByHandle && handle.includes('s'));
+
+    if (snapLeft) {
+        const snap = findBestSnap([{ value: left }], targets.vertical);
+        if (snap) {
+            left += snap.delta;
+            guides.vertical.push(snap.targetValue);
+        }
+    }
+    if (snapRight) {
+        const snap = findBestSnap([{ value: right }], targets.vertical);
+        if (snap) {
+            right += snap.delta;
+            guides.vertical.push(snap.targetValue);
+        }
+    }
+    if (snapTop) {
+        const snap = findBestSnap([{ value: top }], targets.horizontal);
+        if (snap) {
+            top += snap.delta;
+            guides.horizontal.push(snap.targetValue);
+        }
+    }
+    if (snapBottom) {
+        const snap = findBestSnap([{ value: bottom }], targets.horizontal);
+        if (snap) {
+            bottom += snap.delta;
+            guides.horizontal.push(snap.targetValue);
+        }
+    }
+
+    return { left, right, top, bottom, guides };
+}
+
 function beginMoveDrag(selectedComponents, point) {
     if (!selectedComponents.length) return;
+    clearStageGuides();
+    const minX = Math.min(...selectedComponents.map(item => item.x));
+    const minY = Math.min(...selectedComponents.map(item => item.y));
     const rightMost = Math.max(...selectedComponents.map(item => item.x + item.width));
     const bottomMost = Math.max(...selectedComponents.map(item => item.y + item.height));
     dragState = {
@@ -5121,15 +5671,24 @@ function beginMoveDrag(selectedComponents, point) {
         startX: point.x,
         startY: point.y,
         originalById: new Map(selectedComponents.map(item => [item.id, { x: item.x, y: item.y }])),
-        minX: Math.min(...selectedComponents.map(item => item.x)),
-        minY: Math.min(...selectedComponents.map(item => item.y)),
+        minX,
+        minY,
         maxX: rightMost,
-        maxY: bottomMost
+        maxY: bottomMost,
+        groupBounds: {
+            left: minX,
+            top: minY,
+            right: rightMost,
+            bottom: bottomMost,
+            width: rightMost - minX,
+            height: bottomMost - minY
+        }
     };
 }
 
 function beginResizeDrag(component, point, handle = '') {
     if (!component) return;
+    clearStageGuides();
     dragState = {
         interaction: handle ? 'resize-handle' : 'resize-tool',
         componentId: component.id,
@@ -5148,8 +5707,12 @@ function beginResizeDrag(component, point, handle = '') {
 function applyMoveDrag(point) {
     if (!dragState || dragState.interaction !== 'move') return;
 
-    const deltaX = clamp(point.x - dragState.startX, -dragState.minX, state.page.width - dragState.maxX);
-    const deltaY = clamp(point.y - dragState.startY, -dragState.minY, state.page.height - dragState.maxY);
+    let deltaX = clamp(point.x - dragState.startX, -dragState.minX, state.page.width - dragState.maxX);
+    let deltaY = clamp(point.y - dragState.startY, -dragState.minY, state.page.height - dragState.maxY);
+    const snapResult = getMoveSnapResult(deltaX, deltaY);
+    deltaX = clamp(snapResult.deltaX, -dragState.minX, state.page.width - dragState.maxX);
+    deltaY = clamp(snapResult.deltaY, -dragState.minY, state.page.height - dragState.maxY);
+    setStageGuides(snapResult.guides);
 
     dragState.ids.forEach(id => {
         const component = state.components.get(id);
@@ -5187,22 +5750,24 @@ function applyHandleResize(component, point) {
         bottom = clamp(point.y, original.y + minimumSize, state.page.height);
     }
 
-    component.x = left;
-    component.y = top;
-    component.width = right - left;
-    component.height = bottom - top;
-    constrainComponentToStage(component);
+    const snapResult = getResizeSnapResult(component.id, { left, right, top, bottom }, dragState.interaction, dragState.handle);
+    setStageGuides(snapResult.guides);
+    applyResizeEdges(component, snapResult.left, snapResult.right, snapResult.top, snapResult.bottom);
 }
 
 function applyResizeToolDrag(component, point) {
     if (!dragState || dragState.interaction !== 'resize-tool' || !component) return;
 
     const original = dragState.original;
-    component.width = clamp(original.width + (point.x - dragState.startX), 40, state.page.width - original.x);
-    component.height = clamp(original.height + (point.y - dragState.startY), 40, state.page.height - original.y);
-    component.x = original.x;
-    component.y = original.y;
-    constrainComponentToStage(component);
+    const edges = {
+        left: original.x,
+        right: clamp(original.x + original.width + (point.x - dragState.startX), original.x + 40, state.page.width),
+        top: original.y,
+        bottom: clamp(original.y + original.height + (point.y - dragState.startY), original.y + 40, state.page.height)
+    };
+    const snapResult = getResizeSnapResult(component.id, edges, dragState.interaction);
+    setStageGuides(snapResult.guides);
+    applyResizeEdges(component, snapResult.left, snapResult.right, snapResult.top, snapResult.bottom);
 }
 
 function renderAll() {
@@ -5286,6 +5851,7 @@ function applyBoxSelection() {
 
 function beginBoxSelection(event) {
     if (event.button !== 0) return false;
+    clearStageGuides();
     isBoxSelecting = true;
     boxSelectStartPoint = getPointInStage(event.clientX, event.clientY);
     boxSelectCurrentPoint = boxSelectStartPoint;
@@ -5499,7 +6065,12 @@ function bindStageInteractions() {
             return;
         }
         const shouldRefreshProps = Boolean(dragState);
+        const hadGuides = hasStageGuides();
         dragState = null;
+        if (hadGuides) {
+            clearStageGuides();
+            renderStage();
+        }
         if (shouldRefreshProps) {
             renderProperties();
         }
@@ -5618,6 +6189,7 @@ function buildPreviewHtml() {
     }).join('');
 
     const backendOrigin = resolveBackendOrigin();
+    const pageBackgroundStyle = escapeStyleTagContent(buildPageBackgroundStyle(state.page.backgroundConfig));
     return `<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
@@ -5640,7 +6212,7 @@ function buildPreviewHtml() {
             position: relative;
             width: ${state.page.width}px;
             height: ${state.page.height}px;
-            background: ${state.page.background};
+            background: ${pageBackgroundStyle};
             overflow: hidden;
             box-shadow: 0 24px 60px rgba(19, 31, 43, 0.18);
             border-radius: 24px;
@@ -6222,7 +6794,7 @@ function loadImportedProjectFromSession() {
 function seedDemoProject() {
     state.components.clear();
     state.nextId = 1;
-    state.page = { ...DEFAULT_PAGE };
+    state.page = createDefaultPageState();
     clearSelectedComponents();
 
     const title = createTextComponent(88, 72);
@@ -6284,7 +6856,7 @@ function initializeProject() {
     if (entry === 'create') {
         state.components.clear();
         state.nextId = 1;
-        state.page = { ...DEFAULT_PAGE };
+        state.page = createDefaultPageState();
         clearSelectedComponents();
         setCurrentScreenProject(null);
         return;
@@ -6294,7 +6866,26 @@ function initializeProject() {
     setCurrentScreenProject(null);
 }
 
+function setProjectMenuOpen(open) {
+    if (!refs.projectMenuRoot || !refs.projectMenuBtn) return;
+    const nextOpen = Boolean(open);
+    refs.projectMenuRoot.classList.toggle('open', nextOpen);
+    refs.projectMenuBtn.setAttribute('aria-expanded', nextOpen ? 'true' : 'false');
+}
+
 function bindTopbarActions() {
+    refs.projectMenuBtn?.addEventListener('click', (event) => {
+        event.stopPropagation();
+        setProjectMenuOpen(!refs.projectMenuRoot?.classList.contains('open'));
+    });
+
+    refs.backgroundConfigBtn?.addEventListener('click', () => {
+        setProjectMenuOpen(false);
+        openPageBackgroundConfigDialog().catch((error) => {
+            window.alert(error?.message || '打开背景画布配置失败。');
+        });
+    });
+
     refs.openLocalBtn?.addEventListener('click', () => {
         openLocalScreenProjectPicker().catch((error) => {
             window.alert(error?.message || '打开本地项目失败。');
@@ -6341,6 +6932,18 @@ function bindTopbarActions() {
     });
 
     refs.runBtn.addEventListener('click', runPreview);
+
+    document.addEventListener('click', (event) => {
+        if (!refs.projectMenuRoot) return;
+        if (refs.projectMenuRoot.contains(event.target)) return;
+        setProjectMenuOpen(false);
+    });
+
+    document.addEventListener('keydown', (event) => {
+        if (event.key === 'Escape') {
+            setProjectMenuOpen(false);
+        }
+    });
 
     attachAuthControls(refs.accountControls, {
         anonymousLabel: '未登录',
