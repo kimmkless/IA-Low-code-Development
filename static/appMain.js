@@ -10,7 +10,7 @@ import { saveWorkflowRuntime } from './workflowRuntimeStore.js';
 import { initializeWorkflowProjectFromEntry, startWorkflowAutoSave } from './workflowProjectService.js';
 
 let debugSessionId = null;
-const ALLOWED_NODE_TYPES = new Set(['start', 'print', 'sequence', 'loop', 'branch', 'output', 'get_sensor_info', 'db_query', 'environment_model', 'analytics_summary', 'abstract_data_model', 'advanced_prediction']);
+const ALLOWED_NODE_TYPES = new Set(['start', 'print', 'sequence', 'loop', 'branch', 'output', 'get_sensor_info', 'db_query', 'environment_model', 'analytics_summary', 'advanced_prediction', 'media_scene_model']);
 const MIN_CANVAS_ZOOM = 0.5;
 const MAX_CANVAS_ZOOM = 2;
 const CANVAS_ZOOM_STEP = 0.1;
@@ -47,10 +47,10 @@ const COMPONENT_LIBRARY = [
         items: [
             { type: 'get_sensor_info', icon: '🌡️', title: '获取传感器信息', desc: '读取设备列表或最近数据写入变量。' },
             { type: 'db_query', icon: '🗄️', title: '数据库查询', desc: '执行只读 SQL 并把结果写入变量。' },
-            { type: 'environment_model', icon: '🌿', title: '农业环境建模', desc: '消费上游标准化数据包，输出环境评分、风险和建议。' },
+            { type: 'environment_model', icon: '🌿', title: '农业环境建模', desc: '消费上游数据包或设备历史采样，输出评分、预测、产量和决策契约。' },
             { type: 'analytics_summary', icon: '📈', title: '农业分析摘要', desc: '生成趋势、告警、建议或报告摘要并写入变量。' },
-            { type: 'abstract_data_model', icon: '🧠', title: '农业环境抽象模型', desc: '构建农业环境抽象模型，并输出产量、气候和决策所需的统一数据契约。' },
             { type: 'advanced_prediction', icon: '🖼️', title: '高级预测与可视化', desc: '生成预测图片 URL 或图表 CSV，可直接绑定大屏图片和图表组件。' },
+            { type: 'media_scene_model', icon: '🏞️', title: '影像三维场景建模', desc: '导入图片或视频，结合分析结果生成可上屏联动的 3D 环境场景。' },
             { type: 'output', icon: '📤', title: '输出端口节点', desc: '引用本地变量并暴露给项目端口。' }
         ]
     }
@@ -550,6 +550,9 @@ async function runWorkflow() {
             const portValuesById = result?.portValuesById && typeof result.portValuesById === 'object'
                 ? result.portValuesById
                 : {};
+            const nodeValuesById = result?.nodeValuesById && typeof result.nodeValuesById === 'object'
+                ? result.nodeValuesById
+                : {};
 
             if (!Object.keys(portValuesById).length) {
                 for (const port of state.workflowPorts || []) {
@@ -564,7 +567,8 @@ async function runWorkflow() {
 
             saveWorkflowRuntime(state.currentProject.id, {
                 portValuesById,
-                portValuesByName
+                portValuesByName,
+                nodeValuesById
             });
         }
         if (result.logs && result.logs.length) {

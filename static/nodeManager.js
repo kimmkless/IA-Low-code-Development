@@ -1,8 +1,20 @@
 import { state, setExpandedPropertyNodeIds, setNextId, setNodes, setSelectedNodeIds } from './appStore.js';
 import { addConsoleLog, escapeHtml } from './appUtils.js';
 
-const NODE_W = 180;
-const NODE_H = 80;
+const NODE_W = 260;
+const NODE_H = 110;
+const NODE_BOX_BY_TYPE = Object.freeze({
+    start: { width: 220, height: 96 },
+    sequence: { width: 240, height: 104 },
+    print: { width: 260, height: 120 },
+    output: { width: 260, height: 116 },
+    get_sensor_info: { width: 300, height: 132 },
+    db_query: { width: 300, height: 132 },
+    environment_model: { width: 320, height: 132 },
+    analytics_summary: { width: 320, height: 132 },
+    advanced_prediction: { width: 340, height: 136 },
+    media_scene_model: { width: 340, height: 136 }
+});
 const LOOP_HEADER_H = 54;
 const BRANCH_HEADER_H = 54;
 const ROOT_GAP_X = 56;
@@ -18,6 +30,15 @@ const DELETE_SWEEP_RADIUS = 26;
 const PASTE_OFFSET_STEP = 28;
 const MAX_UNDO_HISTORY = 80;
 
+function readFileAsDataUrl(file) {
+    return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(String(reader.result || ''));
+        reader.onerror = () => reject(reader.error || new Error('read file failed'));
+        reader.readAsDataURL(file);
+    });
+}
+
 function typeLabel(type) {
     switch(type) {
         case 'start': return "开始";
@@ -29,8 +50,8 @@ function typeLabel(type) {
         case 'db_query': return "数据库查询";
         case 'environment_model': return "农业环境建模";
         case 'analytics_summary': return "农业分析摘要";
-        case 'abstract_data_model': return "农业环境抽象模型";
         case 'advanced_prediction': return "高级预测与可视化";
+        case 'media_scene_model': return "影像三维场景建模";
         case 'output': return "输出端口";
         default: return type;
     }
@@ -47,8 +68,8 @@ function nodeTypeIcon(type) {
         case 'db_query': return '🗄️';
         case 'environment_model': return '🌿';
         case 'analytics_summary': return '📈';
-        case 'abstract_data_model': return '🧠';
         case 'advanced_prediction': return '🖼️';
+        case 'media_scene_model': return '🏞️';
         case 'output': return '📤';
         default: return '◻';
     }
@@ -160,7 +181,7 @@ function getNodeBox(node, childrenByParent = buildChildrenByParent()) {
         };
     }
 
-    return { width: NODE_W, height: NODE_H };
+    return NODE_BOX_BY_TYPE[node.type] || { width: NODE_W, height: NODE_H };
 }
 
 function getNodePosition(node) {
@@ -679,6 +700,8 @@ export function createNode(type, x, y) {
             baseNode.properties = {
                 name: defaultNameForType(type),
                 inputVariableId: null,
+                deviceId: '',
+                sampleLimit: 24,
                 method: 'weighted_index',
                 targetVariableId: null,
                 nextNodeId: null,
@@ -700,18 +723,6 @@ export function createNode(type, x, y) {
                 breakpoint: false
             };
             break;
-        case 'abstract_data_model':
-            baseNode.properties = {
-                name: defaultNameForType(type),
-                deviceId: '',
-                hours: 168,
-                minPoints: 24,
-                targetVariableId: null,
-                nextNodeId: null,
-                portPositions: {},
-                breakpoint: false
-            };
-            break;
         case 'advanced_prediction':
             baseNode.properties = {
                 name: defaultNameForType(type),
@@ -726,6 +737,30 @@ export function createNode(type, x, y) {
                 lowThreshold: '',
                 highThreshold: '',
                 refreshAssets: 'true',
+                targetVariableId: null,
+                nextNodeId: null,
+                portPositions: {},
+                breakpoint: false
+            };
+            break;
+        case 'media_scene_model':
+            baseNode.properties = {
+                name: defaultNameForType(type),
+                mediaUrl: '',
+                mediaDataUrl: '',
+                mediaFileName: '',
+                mediaType: '',
+                inputVariableId: null,
+                activeLayer: 'soil_moisture',
+                colorScheme: 'default',
+                soilDryThreshold: 35,
+                soilWetThreshold: 62,
+                rainLightThreshold: 1,
+                rainHeavyThreshold: 5,
+                showSoilLayer: true,
+                showRainfallLayer: true,
+                showForecastLayer: true,
+                showElevationLayer: true,
                 targetVariableId: null,
                 nextNodeId: null,
                 portPositions: {},
@@ -1201,9 +1236,13 @@ function renderNodePropertyEditor(node, options = {}) {
             <select class="prop-select" data-node-id="${node.id}" data-field="nextNodeId">${getNodeNameOptions(props.nextNodeId, true)}</select></div>`;
     } else if (node.type === 'environment_model') {
         const method = props.method || 'weighted_index';
-        html += `<div class="prop-group"><label class="prop-label">上游数据变量</label>
+        html += `<div class="prop-group"><label class="prop-label">上游数据变量（可选）</label>
             <select class="prop-select" data-node-id="${node.id}" data-field="inputVariableId">${getWorkflowVariableOptions(props.inputVariableId, true)}</select>
         </div>`;
+        html += `<div class="prop-group"><label class="prop-label">设备 ID（未绑定上游变量时使用）</label>
+            <input class="prop-input" data-node-id="${node.id}" data-field="deviceId" value="${escapeHtml(props.deviceId || '')}" placeholder="留空时使用默认设备"></div>`;
+        html += `<div class="prop-group"><label class="prop-label">历史采样点数</label>
+            <input class="prop-input" type="number" min="1" max="240" data-node-id="${node.id}" data-field="sampleLimit" value="${props.sampleLimit ?? 24}"></div>`;
         html += `<div class="prop-group"><label class="prop-label">综合评价方法</label>
             <select class="prop-select" data-node-id="${node.id}" data-field="method">
                 <option value="weighted_index" ${method === 'weighted_index' ? 'selected' : ''}>加权综合指数法</option>
@@ -1215,12 +1254,12 @@ function renderNodePropertyEditor(node, options = {}) {
         html += `<div class="prop-group"><label class="prop-label">写入变量</label>
             <select class="prop-select" data-node-id="${node.id}" data-field="targetVariableId">${getWorkflowVariableOptions(props.targetVariableId, true)}</select>
         </div>`;
-        html += `<div class="help-text">该节点只消费 get_sensor_info / db_query 输出的数据包，输出 environmentScore、environmentLevel、riskType、indicatorScores 和 suggestions。</div>`;
+        html += `<div class="help-text">该节点可消费 get_sensor_info / db_query 输出的数据包；未选择上游变量时会直接读取设备历史采样。输出包含 environmentScore、screen_contract、气候预测、产量评估和辅助决策数据，可联动摘要、预测、3D 与大屏组件。</div>`;
         html += `<div class="prop-group"><label class="prop-label">执行后下一个节点</label>
             <select class="prop-select" data-node-id="${node.id}" data-field="nextNodeId">${getNodeNameOptions(props.nextNodeId, true)}</select></div>`;
     } else if (node.type === 'analytics_summary') {
         const analysisType = props.analysisType || 'overview';
-        html += `<div class="prop-group"><label class="prop-label">上游模型变量</label>
+        html += `<div class="prop-group"><label class="prop-label">上游农业环境建模变量</label>
             <select class="prop-select" data-node-id="${node.id}" data-field="inputVariableId">${getWorkflowVariableOptions(props.inputVariableId, true)}</select>
         </div>`;
         html += `<div class="prop-group"><label class="prop-label">分析任务</label>
@@ -1245,19 +1284,6 @@ function renderNodePropertyEditor(node, options = {}) {
             <select class="prop-select" data-node-id="${node.id}" data-field="targetVariableId">${getWorkflowVariableOptions(props.targetVariableId, true)}</select>
         </div>`;
         html += `<div class="help-text">用于低代码编排智慧农业分析结果，可直接输出总览、趋势、告警、建议和报告摘要。</div>`;
-        html += `<div class="prop-group"><label class="prop-label">执行后下一节点</label>
-            <select class="prop-select" data-node-id="${node.id}" data-field="nextNodeId">${getNodeNameOptions(props.nextNodeId, true)}</select></div>`;
-    } else if (node.type === 'abstract_data_model') {
-        html += `<div class="prop-group"><label class="prop-label">设备 ID（可选）</label>
-            <input class="prop-input" data-node-id="${node.id}" data-field="deviceId" value="${escapeHtml(props.deviceId || '')}" placeholder="留空时使用默认设备"></div>`;
-        html += `<div class="prop-group"><label class="prop-label">分析时长（小时）</label>
-            <input class="prop-input" type="number" min="24" max="336" data-node-id="${node.id}" data-field="hours" value="${props.hours ?? 168}"></div>`;
-        html += `<div class="prop-group"><label class="prop-label">最少样本点</label>
-            <input class="prop-input" type="number" min="12" max="240" data-node-id="${node.id}" data-field="minPoints" value="${props.minPoints ?? 24}"></div>`;
-        html += `<div class="prop-group"><label class="prop-label">写入变量</label>
-            <select class="prop-select" data-node-id="${node.id}" data-field="targetVariableId">${getWorkflowVariableOptions(props.targetVariableId, true)}</select>
-        </div>`;
-        html += `<div class="help-text">该节点会自动读取历史传感器数据，构建农业环境抽象模型，并在结果中附带产量预测、气候趋势、决策建议以及适合大屏消费的 screen_contract。</div>`;
         html += `<div class="prop-group"><label class="prop-label">执行后下一节点</label>
             <select class="prop-select" data-node-id="${node.id}" data-field="nextNodeId">${getNodeNameOptions(props.nextNodeId, true)}</select></div>`;
     } else if (node.type === 'advanced_prediction') {
@@ -1311,6 +1337,55 @@ function renderNodePropertyEditor(node, options = {}) {
         </div>`;
         html += `<div class="help-text">当输出内容为图片 URL 时，建议写入字符串变量并绑定大屏图片组件；当输出内容为 CSV 时，建议写入 CSV 变量并绑定大屏图表组件。</div>`;
         html += `<div class="prop-group"><label class="prop-label">执行后下一节点</label>
+            <select class="prop-select" data-node-id="${node.id}" data-field="nextNodeId">${getNodeNameOptions(props.nextNodeId, true)}</select></div>`;
+    }
+
+    if (node.type === 'media_scene_model') {
+        const activeLayer = props.activeLayer || 'soil_moisture';
+        const mediaName = props.mediaFileName || (props.mediaDataUrl ? '已导入媒体' : '');
+        html += `<div class="prop-group"><label class="prop-label">导入图片或视频</label>
+            <input class="prop-input" type="file" accept="image/*,video/*" data-node-id="${node.id}" data-node-file-field="mediaDataUrl">
+            <div class="help-text">${escapeHtml(mediaName || '支持图片或视频文件；导入后会用于生成三维环境场景。')}</div>
+        </div>`;
+        html += `<div class="prop-group"><label class="prop-label">媒体地址（可选）</label>
+            <input class="prop-input" data-node-id="${node.id}" data-field="mediaUrl" value="${escapeHtml(props.mediaUrl || '')}" placeholder="也可以填写图片/视频 URL"></div>`;
+        html += `<div class="prop-group"><label class="prop-label">上游农业环境建模变量</label>
+            <select class="prop-select" data-node-id="${node.id}" data-field="inputVariableId">${getWorkflowVariableOptions(props.inputVariableId, true)}</select>
+        </div>`;
+        html += `<div class="prop-group"><label class="prop-label">默认可视化图层</label>
+            <select class="prop-select" data-node-id="${node.id}" data-field="activeLayer">
+                <option value="soil_moisture" ${activeLayer === 'soil_moisture' ? 'selected' : ''}>土壤湿度</option>
+                <option value="rainfall" ${activeLayer === 'rainfall' ? 'selected' : ''}>降雨状况</option>
+                <option value="rain_forecast" ${activeLayer === 'rain_forecast' ? 'selected' : ''}>降雨预测</option>
+                <option value="elevation" ${activeLayer === 'elevation' ? 'selected' : ''}>地形高程</option>
+            </select>
+        </div>`;
+        html += `<div class="prop-group"><label class="prop-label">配色方案</label>
+            <select class="prop-select" data-node-id="${node.id}" data-field="colorScheme">
+                <option value="default" ${String(props.colorScheme || 'default') === 'default' ? 'selected' : ''}>默认农业配色</option>
+                <option value="cool" ${String(props.colorScheme || '') === 'cool' ? 'selected' : ''}>冷色调</option>
+                <option value="warm" ${String(props.colorScheme || '') === 'warm' ? 'selected' : ''}>暖色调</option>
+            </select>
+        </div>`;
+        html += `<div class="prop-group"><label class="prop-label">土壤阈值（干/湿）</label>
+            <input class="prop-input" data-node-id="${node.id}" data-field="soilDryThreshold" type="number" value="${Number(props.soilDryThreshold ?? 35)}" placeholder="干阈值">
+            <input class="prop-input" data-node-id="${node.id}" data-field="soilWetThreshold" type="number" value="${Number(props.soilWetThreshold ?? 62)}" placeholder="湿阈值">
+        </div>`;
+        html += `<div class="prop-group"><label class="prop-label">降雨阈值（小/大）</label>
+            <input class="prop-input" data-node-id="${node.id}" data-field="rainLightThreshold" type="number" value="${Number(props.rainLightThreshold ?? 1)}" placeholder="小雨阈值">
+            <input class="prop-input" data-node-id="${node.id}" data-field="rainHeavyThreshold" type="number" value="${Number(props.rainHeavyThreshold ?? 5)}" placeholder="大雨阈值">
+        </div>`;
+        html += `<div class="prop-group"><label class="prop-label">图层可见性</label>
+            <label><input type="checkbox" data-node-id="${node.id}" data-field="showSoilLayer" ${props.showSoilLayer !== false ? 'checked' : ''}> 土壤湿度</label>
+            <label><input type="checkbox" data-node-id="${node.id}" data-field="showRainfallLayer" ${props.showRainfallLayer !== false ? 'checked' : ''}> 降雨状况</label>
+            <label><input type="checkbox" data-node-id="${node.id}" data-field="showForecastLayer" ${props.showForecastLayer !== false ? 'checked' : ''}> 降雨预测</label>
+            <label><input type="checkbox" data-node-id="${node.id}" data-field="showElevationLayer" ${props.showElevationLayer !== false ? 'checked' : ''}> 地形高程</label>
+        </div>`;
+        html += `<div class="prop-group"><label class="prop-label">写入变量</label>
+            <select class="prop-select" data-node-id="${node.id}" data-field="targetVariableId">${getWorkflowVariableOptions(props.targetVariableId, true)}</select>
+        </div>`;
+        html += `<div class="help-text">推荐绑定 environment_model 输出变量，节点会把环境评分、风险、湿度和预测信息叠加到三维场景模型图层上。</div>`;
+        html += `<div class="prop-group"><label class="prop-label">执行后下一个节点</label>
             <select class="prop-select" data-node-id="${node.id}" data-field="nextNodeId">${getNodeNameOptions(props.nextNodeId, true)}</select></div>`;
     }
 
@@ -1379,8 +1454,8 @@ function renderPropertiesPanel() {
             if (!node || !field) return;
             const beforeSnapshot = snapshotCanvasState();
 
-            let val = el.value;
-            if (field === "loopCount" || field === "limit" || field === "hours" || field === "minPoints" || field === "window" || field === "lags" || field === "forecastSteps") val = parseInt(val, 10) || 1;
+            let val = el.type === 'checkbox' ? el.checked : el.value;
+            if (field === "loopCount" || field === "limit" || field === "hours" || field === "minPoints" || field === "window" || field === "lags" || field === "forecastSteps" || field === "soilDryThreshold" || field === "soilWetThreshold" || field === "rainLightThreshold" || field === "rainHeavyThreshold") val = parseInt(val, 10) || 1;
             if (field === "branchCondition") val = (val === "true");
             if (field === "variableId" || field === "targetVariableId" || field === "inputVariableId") val = val === "" ? null : val;
             if (field === "name") {
@@ -1401,6 +1476,28 @@ function renderPropertiesPanel() {
             renderCanvas();
             renderPropertiesPanel();
             addConsoleLog(`更新节点 ${node.id} 属性: ${field}=${val}`, "info");
+        });
+    });
+
+    propDiv.querySelectorAll("[data-node-file-field][data-node-id]").forEach(el => {
+        el.addEventListener("change", async () => {
+            const nodeId = Number(el.getAttribute("data-node-id"));
+            const field = el.getAttribute("data-node-file-field");
+            const node = state.nodes.get(nodeId);
+            const [file] = el.files || [];
+            if (!node || !field || !file) return;
+            const beforeSnapshot = snapshotCanvasState();
+            try {
+                node.properties[field] = await readFileAsDataUrl(file);
+                node.properties.mediaFileName = file.name || '';
+                node.properties.mediaType = file.type?.startsWith('video/') ? 'video' : (file.type?.startsWith('image/') ? 'image' : '');
+                pushUndoSnapshot(beforeSnapshot);
+                renderCanvas();
+                renderPropertiesPanel();
+                addConsoleLog(`已导入媒体文件: ${file.name || 'media'}`, "info");
+            } catch (error) {
+                addConsoleLog(`导入媒体失败: ${error?.message || error}`, "error");
+            }
         });
     });
 
@@ -1925,12 +2022,8 @@ export function renderCanvas() {
         else if(node.type === 'environment_model') {
             const inputVariable = getWorkflowVariableById(node.properties?.inputVariableId);
             const variable = getWorkflowVariableById(node.properties?.targetVariableId);
-            bodyPreview = `输入: ${escapeHtml(inputVariable?.name || "未选择变量")}<br/>写入: ${escapeHtml(variable?.name || "未选择变量")}`;
-        }
-        else if(node.type === 'abstract_data_model') {
-            const variable = getWorkflowVariableById(node.properties?.targetVariableId);
-            const hours = Number(node.properties?.hours) || 168;
-            bodyPreview = `建模窗口: ${hours} 小时<br/>写入: ${escapeHtml(variable?.name || "未选择变量")}`;
+            const sourceText = inputVariable?.name || `${node.properties?.deviceId || '默认设备'} · ${Number(node.properties?.sampleLimit) || 24}点`;
+            bodyPreview = `输入: ${escapeHtml(sourceText)}<br/>写入: ${escapeHtml(variable?.name || "未选择变量")}`;
         }
         else if(node.type === 'advanced_prediction') {
             const variable = getWorkflowVariableById(node.properties?.targetVariableId);
@@ -1948,6 +2041,12 @@ export function renderCanvas() {
                 full_result_json: '完整结果'
             };
             bodyPreview = `${escapeHtml(target)} · ${escapeHtml(outputLabels[outputKind] || outputKind)}<br/>写入: ${escapeHtml(variable?.name || "未选择变量")}`;
+        }
+        else if(node.type === 'media_scene_model') {
+            const inputVariable = getWorkflowVariableById(node.properties?.inputVariableId);
+            const variable = getWorkflowVariableById(node.properties?.targetVariableId);
+            const mediaLabel = node.properties?.mediaFileName || (node.properties?.mediaDataUrl || node.properties?.mediaUrl ? '已导入媒体' : '未导入媒体');
+            bodyPreview = `${escapeHtml(mediaLabel)}<br/>分析: ${escapeHtml(inputVariable?.name || "未选择变量")}<br/>写入: ${escapeHtml(variable?.name || "未选择变量")}`;
         }
         else if(node.type === 'output') {
             const variable = getWorkflowVariableById(node.properties?.variableId);
@@ -1981,7 +2080,7 @@ export function renderCanvas() {
 
         // 端口
         let connectPointsHtml = '';
-        if (node.type === 'start' || node.type === 'print' || node.type === 'sequence' || node.type === 'output' || node.type === 'get_sensor_info' || node.type === 'db_query' || node.type === 'environment_model' || node.type === 'analytics_summary' || node.type === 'abstract_data_model' || node.type === 'advanced_prediction') {
+        if (node.type === 'start' || node.type === 'print' || node.type === 'sequence' || node.type === 'output' || node.type === 'get_sensor_info' || node.type === 'db_query' || node.type === 'environment_model' || node.type === 'analytics_summary' || node.type === 'advanced_prediction' || node.type === 'media_scene_model') {
             connectPointsHtml = `<div class="connect-point" data-id="${node.id}" data-field="nextNodeId" style="${portStyle('nextNodeId', 50)} --cp-color:#3498db; --cp-hover-color:#2c7da0;" title="端口：下一步（next）【Shift+拖动可移动端口】"></div>`;
         } else if (node.type === 'loop') {
             connectPointsHtml = `
@@ -2055,6 +2154,11 @@ export function renderCanvas() {
             nodeDiv.style.width = w + 'px';
             nodeDiv.style.height = h + 'px';
             nodeDiv.querySelectorAll('.branch-col').forEach(c => { c.style.height = Math.max(140, h - headerH - 34) + 'px'; });
+        }
+        if (!isContainer) {
+            const { width: w, height: h } = getNodeBox(node, childrenByParent);
+            nodeDiv.style.width = w + 'px';
+            nodeDiv.style.minHeight = h + 'px';
         }
 
         nodeDiv.addEventListener("click", (e) => {

@@ -1,11 +1,11 @@
-﻿
-import { getProjectById, listProjectsByType, touchProject } from './projectRepository.js';
+
+import { ensureDemoProjects, getProjectById, listProjectsByType, touchProject } from './projectRepository.js';
 import { createProjectRecord, findProjectByCloudId, saveProjectData } from './projectRepository.js';
 import { attachAuthControls, requireAuthenticated } from './authService.js';
 import { getUserProject, listUserProjects, saveUserProject } from './cloudProjectService.js';
 import { showSharedDialog } from './dialogService.js';
 import { downloadCloudProjectToLocalFile } from './projectDownloadService.js';
-import { getWorkflowRuntime } from './workflowRuntimeStore.js';
+import { getWorkflowRuntime, saveWorkflowRuntime } from './workflowRuntimeStore.js';
 
 const IMPORT_STORAGE_KEY = 'ia-editor-import-payload';
 const SOURCE_MODE_MANUAL = 'manual';
@@ -112,8 +112,8 @@ const COMPONENT_LIBRARY = [
     {
         type: 'agri-model',
         icon: '🧠',
-        title: '环境抽象模型',
-        description: '展示农业环境抽象模型、主导维度、风险分数与模型摘要。'
+        title: '农业环境建模',
+        description: '展示农业环境建模结果、主导维度、风险分数与模型摘要。'
     },
     {
         type: 'agri-climate',
@@ -138,6 +138,12 @@ const COMPONENT_LIBRARY = [
         icon: '🧾',
         title: '分析摘要卡',
         description: '专门解析农业分析摘要节点输出，自动去掉原始 JSON、英文键名和多余括号。'
+    },
+    {
+        type: 'agri-scene3d',
+        icon: '🏞️',
+        title: '3D 环境场景',
+        description: '绑定影像三维场景建模节点输出，在模型上切换土壤湿度、降雨和预测图层。'
     },
     {
         type: 'weather',
@@ -590,11 +596,12 @@ function getComponentTypeLabel(componentType) {
         'chart-line': '折线图表',
         'chart-pie': '饼图表',
         weather: '天气信息',
-        'agri-model': '环境抽象模型',
+        'agri-model': '农业环境建模',
         'agri-climate': '气候预测卡',
         'agri-yield': '产量预测卡',
         'agri-decision': '辅助决策卡',
         'agri-summary': '分析摘要卡',
+        'agri-scene3d': '3D 环境场景',
         'agri-system': '系统数据卡',
         'agri-environment': '环境监测卡',
         'agri-communication': '通讯状态卡'
@@ -615,6 +622,9 @@ function summarizeComponentProps(component) {
     if (component.type === 'agri-sensor') return `传感器数量：${component.props.sensors?.length || 0}`;
     if (component.type === 'agri-summary') {
         return `数据模式：${normalizeSource(component.props.source).mode === SOURCE_MODE_WORKFLOW_PORT ? '工作流端口' : '手动内容'}`;
+    }
+    if (component.type === 'agri-scene3d') {
+        return `图层：${component.props.activeLayer || 'soil_moisture'} · ${normalizeSource(component.props.source).mode === SOURCE_MODE_WORKFLOW_PORT ? '工作流端口' : '手动 JSON'}`;
     }
     if (component.type === 'agri-model' || component.type === 'agri-climate' || component.type === 'agri-yield' || component.type === 'agri-decision') {
         return `数据模式：${normalizeSource(component.props.source).mode === SOURCE_MODE_WORKFLOW_PORT ? '工作流端口' : '手动 JSON'}`;
@@ -642,11 +652,11 @@ function buildSampleAgriTwinPayload() {
     return {
         status: 'ok',
         model_id: 'demo-agri-twin',
-        model_name: '智慧农业抽象数据模型',
+        model_name: '农业环境建模',
         screen_contract: {
             overview: {
-                title: '智慧农业抽象数据模型',
-                summary: '样例模型已完成对温湿光土等环境变量的抽象建模，可直接驱动大屏中的建模、预测与决策组件。',
+                title: '农业环境建模',
+                summary: '样例模型已完成对温湿光土等环境变量的综合建模，可直接驱动大屏中的建模、预测与决策组件。',
                 sample_count: 192,
                 updated_at: '2026-04-19 09:30:00',
                 climate_archetype: '稳定适生型',
@@ -856,8 +866,8 @@ function createChartComponent(x, y, chartType = 'bar') {
         type: 'chart',
         x,
         y,
-        width: 520,
-        height: 320,
+        width: 640,
+        height: 360,
         props: createChartProps(chartType)
     };
 }
@@ -868,8 +878,8 @@ function createWeatherComponent(x, y) {
         type: 'weather',
         x,
         y,
-        width: 380,
-        height: 300,
+        width: 560,
+        height: 360,
         props: {
             title: '天气预报',
             subtitle: '北京',
@@ -893,8 +903,8 @@ function createSensorComponent(x, y) {
         type: 'agri-sensor',
         x,
         y,
-        width: 430,
-        height: 400,
+        width: 560,
+        height: 360,
         props: {
             title: '传感器数据',
             dataMode: SOURCE_MODE_MANUAL,
@@ -916,10 +926,10 @@ function createAgriModelComponent(x, y) {
         type: 'agri-model',
         x,
         y,
-        width: 460,
-        height: 320,
+        width: 720,
+        height: 520,
         props: {
-            title: '农业环境抽象模型',
+            title: '农业环境建模',
             jsonText: buildSampleAgriTwinJson(),
             source: createDefaultSource()
         }
@@ -932,8 +942,8 @@ function createAgriClimateComponent(x, y) {
         type: 'agri-climate',
         x,
         y,
-        width: 420,
-        height: 300,
+        width: 680,
+        height: 420,
         props: {
             title: '气候趋势预测',
             jsonText: buildSampleAgriTwinJson(),
@@ -948,8 +958,8 @@ function createAgriYieldComponent(x, y) {
         type: 'agri-yield',
         x,
         y,
-        width: 400,
-        height: 320,
+        width: 680,
+        height: 440,
         props: {
             title: '产量预测',
             jsonText: buildSampleAgriTwinJson(),
@@ -964,8 +974,8 @@ function createAgriDecisionComponent(x, y) {
         type: 'agri-decision',
         x,
         y,
-        width: 460,
-        height: 340,
+        width: 720,
+        height: 520,
         props: {
             title: '辅助决策',
             jsonText: buildSampleAgriTwinJson(),
@@ -1025,11 +1035,83 @@ function createAgriSummaryComponent(x, y) {
         type: 'agri-summary',
         x,
         y,
-        width: 460,
-        height: 340,
+        width: 508,
+        height: 420,
         props: {
             title: '农业分析摘要',
             jsonText: buildSampleAgriSummaryJson(),
+            source: createDefaultSource()
+        }
+    };
+}
+
+function buildSampleAgriScene3dPayload() {
+    const columns = 7;
+    const rows = 5;
+    const terrain = [];
+    for (let z = 0; z < rows; z += 1) {
+        for (let x = 0; x < columns; x += 1) {
+            const elevation = 8 + Math.abs(x - 3) * 1.8 + Math.abs(z - 2) * 1.1;
+            const soil = Math.max(18, Math.min(82, 48 + (2 - z) * 4 + (x - 3) * 1.8));
+            const rainfall = Math.max(0, 1.2 + z * 0.35 + (x % 3) * 0.18);
+            const rainForecast = Math.max(0, rainfall * 1.35 + (6 - x) * 0.14);
+            terrain.push({
+                x,
+                z,
+                elevation: Number(elevation.toFixed(2)),
+                soil_moisture: Number(soil.toFixed(2)),
+                rainfall: Number(rainfall.toFixed(2)),
+                rain_forecast: Number(rainForecast.toFixed(2)),
+                colors: {
+                    soil_moisture: soil < 35 ? '#b45309' : soil < 50 ? '#f59e0b' : soil < 64 ? '#22c55e' : '#0ea5e9',
+                    rainfall: rainfall < 0.8 ? '#e0f2fe' : rainfall < 2.2 ? '#7dd3fc' : '#0284c7',
+                    rain_forecast: rainForecast < 1 ? '#f8fafc' : rainForecast < 3 ? '#a7f3d0' : '#10b981',
+                    elevation: elevation < 10 ? '#bbf7d0' : elevation < 15 ? '#86efac' : '#fde68a'
+                }
+            });
+        }
+    }
+    return {
+        status: 'ok',
+        contract: 'ia.workflow.media_scene3d.v1',
+        media: { kind: 'image', fileName: 'demo-field.jpg' },
+        analysisBinding: { environmentScore: 76.4, environmentLevel: '良好', riskType: '土壤水分波动' },
+        model: {
+            type: 'procedural_agri_scene',
+            grid: { columns, rows },
+            terrain,
+            objects: [
+                { kind: 'sensor_tower', x: 1, z: 1, height: 24 },
+                { kind: 'irrigation_line', x: 3, z: 0, length: rows },
+                { kind: 'rain_gauge', x: 5, z: 3, height: 16 }
+            ]
+        },
+        layers: [
+            { key: 'soil_moisture', label: '土壤湿度', unit: '%', min: 0, max: 100 },
+            { key: 'rainfall', label: '降雨状况', unit: 'mm', min: 0, max: 8 },
+            { key: 'rain_forecast', label: '降雨预测', unit: 'mm', min: 0, max: 8 },
+            { key: 'elevation', label: '地形高程', unit: 'm', min: 0, max: 24 }
+        ],
+        activeLayer: 'soil_moisture',
+        screen_contract: {
+            title: '影像三维环境场景',
+            summary: '样例场景展示导入影像生成的地块模型，可切换土壤湿度、降雨状况与降雨预测图层。'
+        }
+    };
+}
+
+function createAgriScene3dComponent(x, y) {
+    return {
+        id: state.nextId++,
+        type: 'agri-scene3d',
+        x,
+        y,
+        width: 720,
+        height: 520,
+        props: {
+            title: '3D 环境场景',
+            jsonText: JSON.stringify(buildSampleAgriScene3dPayload(), null, 2),
+            activeLayer: 'soil_moisture',
             source: createDefaultSource()
         }
     };
@@ -1048,6 +1130,7 @@ function createComponent(type, x, y) {
     if (type === 'agri-yield') return createAgriYieldComponent(x, y);
     if (type === 'agri-decision') return createAgriDecisionComponent(x, y);
     if (type === 'agri-summary') return createAgriSummaryComponent(x, y);
+    if (type === 'agri-scene3d') return createAgriScene3dComponent(x, y);
     if (type === 'weather') return createWeatherComponent(x, y);
     return null;
 }
@@ -1071,6 +1154,8 @@ function normalizeComponent(rawComponent) {
                                 ? 'agri-decision'
                                 : rawType === 'agri-summary'
                                     ? 'agri-summary'
+                                    : rawType === 'agri-scene3d'
+                                        ? 'agri-scene3d'
                 : rawType === 'weather'
                     ? 'weather'
                 : 'text';
@@ -1091,6 +1176,8 @@ function normalizeComponent(rawComponent) {
                                 ? createAgriDecisionComponent(80, 80)
                                 : type === 'agri-summary'
                                     ? createAgriSummaryComponent(80, 80)
+                                    : type === 'agri-scene3d'
+                                        ? createAgriScene3dComponent(80, 80)
                 : type === 'weather'
                     ? createWeatherComponent(80, 80)
                 : createTextComponent(80, 80);
@@ -1119,7 +1206,8 @@ function isAgricultureComponentType(type) {
         || type === 'agri-climate'
         || type === 'agri-yield'
         || type === 'agri-decision'
-        || type === 'agri-summary';
+        || type === 'agri-summary'
+        || type === 'agri-scene3d';
 }
 
 function isAgriInsightComponentType(type) {
@@ -1245,12 +1333,14 @@ function usesWorkflowSource(type) {
         || type === 'agri-climate'
         || type === 'agri-yield'
         || type === 'agri-decision'
-        || type === 'agri-summary';
+        || type === 'agri-summary'
+        || type === 'agri-scene3d';
 }
 
 function getSupportedPortTypes(componentType) {
     if (componentType === 'image') return ['string'];
     if (componentType === 'agri-summary') return ['string'];
+    if (componentType === 'agri-scene3d') return ['string'];
     if (isAgriInsightComponentType(componentType)) return ['string', 'csv'];
     if (componentType === 'chart') return ['string', 'csv'];
     return ['string', 'int'];
@@ -1349,6 +1439,19 @@ function resolveVariableDefaultValue(variable) {
         : String(variable.defaultValue ?? '');
 }
 
+function isUsableWorkflowPortValue(value) {
+    if (value == null) return false;
+    if (typeof value === 'number') return Number.isFinite(value);
+    if (typeof value === 'boolean') return true;
+    if (Array.isArray(value)) return value.length > 0;
+    if (typeof value === 'object') return Object.keys(value).length > 0;
+
+    const text = String(value).trim();
+    if (!text) return false;
+    const lowered = text.toLowerCase();
+    return !['null', 'undefined', 'nan', '{}', '[]', '[object object]'].includes(lowered);
+}
+
 function resolveWorkflowPortRuntimeValue(projectId, portId) {
     const context = getWorkflowProjectRuntimeContext(projectId);
     if (!context) return { ok: false, reason: 'missing-project' };
@@ -1367,25 +1470,31 @@ function resolveWorkflowPortRuntimeValue(projectId, portId) {
     const portNameKey = String(port.name || '').trim();
 
     if (runtimeById && Object.prototype.hasOwnProperty.call(runtimeById, portIdKey)) {
-        return {
-            ok: true,
-            value: runtimeById[portIdKey],
-            source: 'runtime',
-            updatedAt: runtime.updatedAt,
-            project: context.project,
-            port
-        };
+        const value = runtimeById[portIdKey];
+        if (isUsableWorkflowPortValue(value)) {
+            return {
+                ok: true,
+                value,
+                source: 'runtime',
+                updatedAt: runtime.updatedAt,
+                project: context.project,
+                port
+            };
+        }
     }
 
     if (runtimeByName && portNameKey && Object.prototype.hasOwnProperty.call(runtimeByName, portNameKey)) {
-        return {
-            ok: true,
-            value: runtimeByName[portNameKey],
-            source: 'runtime',
-            updatedAt: runtime.updatedAt,
-            project: context.project,
-            port
-        };
+        const value = runtimeByName[portNameKey];
+        if (isUsableWorkflowPortValue(value)) {
+            return {
+                ok: true,
+                value,
+                source: 'runtime',
+                updatedAt: runtime.updatedAt,
+                project: context.project,
+                port
+            };
+        }
     }
 
     const nodeId = Number(port?.nodeId);
@@ -1420,6 +1529,90 @@ function resolveWorkflowPortRuntimeValue(projectId, portId) {
         project: context.project,
         port,
         node
+    };
+}
+
+function getBoundWorkflowProjects() {
+    const projectIds = new Set();
+    state.components.forEach(component => {
+        if (!usesWorkflowSource(component.type)) return;
+        const source = normalizeSource(component?.props?.source);
+        if (source.mode !== SOURCE_MODE_WORKFLOW_PORT || !source.workflowProjectId) return;
+        projectIds.add(String(source.workflowProjectId));
+    });
+    return Array.from(projectIds)
+        .map(projectId => getProjectById(projectId))
+        .filter(project => project && project.type === 'workflow' && Array.isArray(project.data?.nodes));
+}
+
+function normalizeWorkflowExecutionRuntime(project, result = {}) {
+    const portValuesByName = result?.portValuesByName && typeof result.portValuesByName === 'object'
+        ? result.portValuesByName
+        : result?.port_values && typeof result.port_values === 'object'
+            ? result.port_values
+            : {};
+    const portValuesById = result?.portValuesById && typeof result.portValuesById === 'object'
+        ? { ...result.portValuesById }
+        : {};
+    const nodeValuesById = result?.nodeValuesById && typeof result.nodeValuesById === 'object'
+        ? result.nodeValuesById
+        : {};
+
+    if (!Object.keys(portValuesById).length) {
+        const ports = Array.isArray(project?.data?.workflow_ports) ? project.data.workflow_ports : [];
+        ports.forEach(port => {
+            const portId = String(port?.id || '');
+            const portName = String(port?.name || '').trim();
+            if (!portId || !portName) return;
+            if (Object.prototype.hasOwnProperty.call(portValuesByName, portName)) {
+                portValuesById[portId] = portValuesByName[portName];
+            }
+        });
+    }
+
+    return { portValuesById, portValuesByName, nodeValuesById };
+}
+
+async function executeWorkflowProjectForScreen(project) {
+    const payload = {
+        nodes: Array.isArray(project?.data?.nodes) ? project.data.nodes : [],
+        workflow_variables: Array.isArray(project?.data?.workflow_variables) ? project.data.workflow_variables : [],
+        workflow_ports: Array.isArray(project?.data?.workflow_ports) ? project.data.workflow_ports : []
+    };
+    if (!payload.nodes.length) return { ok: false, message: 'workflow-empty' };
+
+    const response = await fetch('/api/workflow/execute', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+    });
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok) {
+        return { ok: false, message: result?.error || `HTTP ${response.status}` };
+    }
+
+    const runtime = normalizeWorkflowExecutionRuntime(project, result);
+    saveWorkflowRuntime(project.id, runtime);
+    return { ok: true, runtime, result };
+}
+
+async function refreshBoundWorkflowRuntimeForScreen() {
+    const projects = getBoundWorkflowProjects();
+    if (!projects.length) return { total: 0, ok: 0, failed: [] };
+
+    const results = await Promise.all(projects.map(async project => {
+        try {
+            const execution = await executeWorkflowProjectForScreen(project);
+            return { project, ...execution };
+        } catch (error) {
+            return { project, ok: false, message: error?.message || 'execute-failed' };
+        }
+    }));
+
+    return {
+        total: results.length,
+        ok: results.filter(item => item.ok).length,
+        failed: results.filter(item => !item.ok)
     };
 }
 
@@ -1512,6 +1705,9 @@ function getSourceStatusText(component) {
         }
         if (component.type === 'agri-summary') {
             return `${typeHint}${runtimeHint} 该组件会优先解析分析摘要节点返回的 JSON 文本，并自动整理为可直接上屏的中文摘要卡。`;
+        }
+        if (component.type === 'agri-scene3d') {
+            return `${typeHint}${runtimeHint} 该组件会解析影像三维场景建模节点输出的 JSON，并把数据图层渲染到 3D 环境模型上。`;
         }
         return `${typeHint}${runtimeHint} 文本组件支持字符串与整型端口。`;
     }
@@ -1869,10 +2065,10 @@ function buildTextPayloadForAgriComponent(componentType, text, title = '') {
 
     if (componentType === 'agri-model') {
         return {
-            model_name: safeTitle || '农业环境抽象模型',
+            model_name: safeTitle || '农业环境建模',
             screen_contract: {
                 overview: {
-                    title: safeTitle || '农业环境抽象模型',
+                    title: safeTitle || '农业环境建模',
                     summary: safeText,
                     climate_archetype: '文本摘要',
                     dimension_bars: []
@@ -2257,11 +2453,23 @@ function getChartRenderState(component) {
         : 'bar';
 
     if (binding.valid) {
-        if (binding.runtimeValue?.ok && String(binding.runtimeValue.value ?? '').trim()) {
-            csvText = resolveChartWorkflowCsvText(binding.runtimeValue.value, chartType);
+        if (binding.runtimeValue?.ok && isUsableWorkflowPortValue(binding.runtimeValue.value)) {
+            const candidateCsvText = resolveChartWorkflowCsvText(binding.runtimeValue.value, chartType);
             const extractedFromStructured = typeof binding.runtimeValue.value !== 'string'
                 || parseCsvText(String(binding.runtimeValue.value ?? '')).error;
-            sourceNote = `${binding.label} · ${getPortTypeLabel(binding.port.dataType)}${extractedFromStructured && !parseCsvText(csvText).error ? ' · 已自动提取图表数据' : ''}`;
+            if (candidateCsvText && !parseCsvText(candidateCsvText).error) {
+                csvText = candidateCsvText;
+                sourceNote = `${binding.label} · ${getPortTypeLabel(binding.port.dataType)}${extractedFromStructured ? ' · 已自动提取图表数据' : ''}`;
+            } else if (component.props.csvText && !parseCsvText(component.props.csvText).error) {
+                csvText = component.props.csvText;
+                sourceNote = `${binding.label} · 端口数据不可绘图，已使用演示默认数据`;
+            } else {
+                csvText = candidateCsvText || '';
+                sourceNote = `${binding.label} · ${getPortTypeLabel(binding.port.dataType)}`;
+            }
+        } else if (component.props.csvText && !parseCsvText(component.props.csvText).error) {
+            csvText = component.props.csvText;
+            sourceNote = `${binding.label} · 端口暂无可用数据，已使用演示默认数据`;
         } else {
             return {
                 chartType,
@@ -2291,6 +2499,24 @@ function getChartRenderState(component) {
 
     const config = resolveChartConfig(parsed, component);
     const chartData = buildChartData(parsed, config);
+    if (chartData?.error && binding?.valid && component.props.csvText && csvText !== component.props.csvText) {
+        const fallbackParsed = parseCsvText(component.props.csvText);
+        if (!fallbackParsed.error) {
+            const fallbackConfig = resolveChartConfig(fallbackParsed, component);
+            const fallbackChartData = buildChartData(fallbackParsed, fallbackConfig);
+            if (!fallbackChartData?.error) {
+                return {
+                    chartType: fallbackConfig.chartType,
+                    csvText: component.props.csvText,
+                    parsed: fallbackParsed,
+                    config: fallbackConfig,
+                    chartData: fallbackChartData,
+                    binding,
+                    sourceNote: sourceNote ? `${sourceNote} · 图表数据为空，已使用演示默认数据` : '图表数据为空，已使用演示默认数据'
+                };
+            }
+        }
+    }
     return {
         chartType: config.chartType,
         csvText,
@@ -2573,6 +2799,31 @@ function normalizeSourcePayloadText(value) {
     }
 }
 
+function isUsableStructuredPayload(payload) {
+    if (!payload || typeof payload !== 'object') return false;
+    if (Array.isArray(payload)) return payload.length > 0;
+    const status = String(payload.status || '').trim().toLowerCase();
+    if (status === 'error' || status === 'insufficient-data') return false;
+    const meaningfulKeys = Object.keys(payload).filter(key => !['status', 'message'].includes(key));
+    return meaningfulKeys.length > 0;
+}
+
+function getComponentStructuredFallbackPayload(component) {
+    if (!component?.props?.jsonText) return null;
+    const fallback = parseStructuredJson(component.props.jsonText);
+    return fallback.ok ? unwrapStructuredPayload(fallback.value) : null;
+}
+
+function buildStructuredFallbackRenderState(component, sourceNote, reason = '端口数据不可用') {
+    const fallbackPayload = getComponentStructuredFallbackPayload(component);
+    if (!isUsableStructuredPayload(fallbackPayload)) return null;
+    return {
+        payload: fallbackPayload,
+        sourceNote: sourceNote ? `${sourceNote} · ${reason}，已使用演示默认数据` : `${reason}，已使用演示默认数据`,
+        error: ''
+    };
+}
+
 function getStructuredAgriRenderState(component) {
     const binding = resolveWorkflowBinding(component);
     let jsonText = component?.props?.jsonText || '';
@@ -2583,6 +2834,8 @@ function getStructuredAgriRenderState(component) {
             jsonText = normalizeSourcePayloadText(binding.runtimeValue.value);
             sourceNote = `${binding.label} · ${getPortTypeLabel(binding.port.dataType)}`;
         } else {
+            const fallbackState = buildStructuredFallbackRenderState(component, `${binding.label} · 端口值不可用`);
+            if (fallbackState) return fallbackState;
             return {
                 error: '当前工作流端口暂无可用模型数据。',
                 sourceNote: `${binding.label} · 端口值不可用`,
@@ -2607,6 +2860,8 @@ function getStructuredAgriRenderState(component) {
                 error: ''
             };
         }
+        const fallbackState = buildStructuredFallbackRenderState(component, sourceNote, '端口 JSON 解析失败');
+        if (fallbackState) return fallbackState;
         return {
             error: `JSON 解析失败：${parsed.error}`,
             sourceNote,
@@ -2615,7 +2870,13 @@ function getStructuredAgriRenderState(component) {
     }
 
     const payload = unwrapStructuredPayload(parsed.value);
-    if (!payload) {
+    if (!isUsableStructuredPayload(payload)) {
+        const fallbackState = buildStructuredFallbackRenderState(
+            component,
+            sourceNote,
+            payload?.status === 'insufficient-data' ? '运行结果数据不足' : '端口数据不可用'
+        );
+        if (fallbackState) return fallbackState;
         return {
             error: '未解析到可用的结构化数据对象。',
             sourceNote,
@@ -2659,7 +2920,7 @@ function getAgriModelView(payload) {
     const latentState = payload?.latent_state || {};
     const datasetProfile = payload?.dataset_profile || {};
     return {
-        title: overview.title || payload?.model_name || '农业环境抽象模型',
+        title: overview.title || payload?.model_name || '农业环境建模',
         summary: overview.summary || payload?.external_view?.summary || '暂无模型摘要。',
         climateArchetype: overview.climate_archetype || latentState.climate_archetype || '未识别',
         riskScore: overview.risk_score,
@@ -3268,6 +3529,33 @@ function buildAgriSummaryView(payloadValue, title = '') {
     return buildAgriSummaryTextView(payloadValue, title);
 }
 
+function hasRenderableAgriSummaryView(view) {
+    return Boolean(view && (view.lead || view.sections?.length || view.metrics?.length));
+}
+
+function isUsableAgriSummaryPayloadValue(payloadValue) {
+    if (Array.isArray(payloadValue)) return payloadValue.length > 0;
+    if (payloadValue && typeof payloadValue === 'object') {
+        const status = String(payloadValue.status || '').trim().toLowerCase();
+        if (status === 'error' || status === 'insufficient-data') return false;
+        return Object.keys(payloadValue).some(key => !['status', 'message'].includes(key));
+    }
+    return isMeaningfulAgriSummaryText(payloadValue);
+}
+
+function buildAgriSummaryFallbackState(component, sourceNote, reason = '端口数据不可用') {
+    if (!component?.props?.jsonText) return null;
+    const fallbackPayload = getAgriSummaryPayloadValue(component.props.jsonText);
+    if (!isUsableAgriSummaryPayloadValue(fallbackPayload.value)) return null;
+    const fallbackView = buildAgriSummaryView(fallbackPayload.value, component?.props?.title);
+    if (!hasRenderableAgriSummaryView(fallbackView)) return null;
+    return {
+        error: '',
+        sourceNote: sourceNote ? `${sourceNote} · ${reason}，已使用演示默认数据` : `${reason}，已使用演示默认数据`,
+        view: fallbackView
+    };
+}
+
 function getAgriSummaryRenderState(component) {
     const binding = resolveWorkflowBinding(component);
     let rawValue = component?.props?.jsonText || '';
@@ -3278,6 +3566,8 @@ function getAgriSummaryRenderState(component) {
             rawValue = binding.runtimeValue.value;
             sourceNote = `${binding.label} · ${getPortTypeLabel(binding.port.dataType)}`;
         } else {
+            const fallbackState = buildAgriSummaryFallbackState(component, `${binding.label} · 端口值不可用`);
+            if (fallbackState) return fallbackState;
             return {
                 error: '当前工作流端口暂无可用摘要数据。',
                 sourceNote: `${binding.label} · 端口值不可用`,
@@ -3293,8 +3583,14 @@ function getAgriSummaryRenderState(component) {
     }
 
     const payload = getAgriSummaryPayloadValue(rawValue);
+    if (!isUsableAgriSummaryPayloadValue(payload.value)) {
+        const fallbackState = buildAgriSummaryFallbackState(component, sourceNote, '端口数据不可用');
+        if (fallbackState) return fallbackState;
+    }
     const view = buildAgriSummaryView(payload.value, component?.props?.title);
-    if (!view || (!view.lead && !view.sections?.length && !view.metrics?.length)) {
+    if (!hasRenderableAgriSummaryView(view)) {
+        const fallbackState = buildAgriSummaryFallbackState(component, sourceNote, '摘要内容为空');
+        if (fallbackState) return fallbackState;
         return {
             error: '暂无可显示的摘要内容。',
             sourceNote,
@@ -3401,7 +3697,7 @@ function renderAgriDecisionMarkup(component) {
     }
     const view = getAgriDecisionView(state.payload);
     const top = view.topDecision || {};
-    const modulesHtml = (view.modules || []).slice(0, 4).map(item => `
+    const modulesHtml = (view.modules || []).slice(0, 3).map(item => `
         <div class="agri-decision-item">
             <div class="agri-decision-item-head">
                 <span>${escapeHtml(String(item.module || 'module'))}</span>
@@ -3439,17 +3735,17 @@ function renderAgriSummaryMarkup(component) {
     }
 
     const view = state.view || {};
-    const metricsHtml = (Array.isArray(view.metrics) ? view.metrics : []).slice(0, 4).map(metric => `
+    const metricsHtml = (Array.isArray(view.metrics) ? view.metrics : []).slice(0, 2).map(metric => `
         <div class="agri-summary-metric-card">
             <span class="agri-summary-metric-label">${escapeHtml(String(metric.label || '指标'))}</span>
             <span class="agri-summary-metric-value">${escapeHtml(String(metric.value || '--'))}</span>
         </div>
     `).join('');
-    const sectionsHtml = (Array.isArray(view.sections) ? view.sections : []).slice(0, 3).map(section => `
+    const sectionsHtml = (Array.isArray(view.sections) ? view.sections : []).slice(0, 1).map(section => `
         <div class="agri-summary-section">
             <div class="agri-summary-section-title">${escapeHtml(String(section.title || '摘要内容'))}</div>
             <div class="agri-summary-item-list">
-                ${(Array.isArray(section.items) ? section.items : []).slice(0, 4).map(item => `
+                ${(Array.isArray(section.items) ? section.items : []).slice(0, 2).map(item => `
                     <div class="agri-summary-item">${escapeHtml(String(item || ''))}</div>
                 `).join('')}
             </div>
@@ -3470,6 +3766,202 @@ function renderAgriSummaryMarkup(component) {
             ${view.secondary ? `<div class="agri-summary-secondary">${escapeHtml(String(view.secondary))}</div>` : ''}
             ${metricsHtml ? `<div class="agri-summary-metric-grid">${metricsHtml}</div>` : ''}
             ${sectionsHtml ? `<div class="agri-summary-sections">${sectionsHtml}</div>` : ''}
+        </div>
+    `;
+}
+
+function getAgriScene3dRenderState(component) {
+    const state = getStructuredAgriRenderState(component);
+    if (state.error) return state;
+    const payload = state.payload && typeof state.payload === 'object'
+        ? state.payload
+        : buildSampleAgriScene3dPayload();
+    return {
+        ...state,
+        payload
+    };
+}
+
+function getSceneLayerColor(tile, layerKey) {
+    const colors = tile?.colors && typeof tile.colors === 'object' ? tile.colors : {};
+    if (colors[layerKey]) return colors[layerKey];
+    const value = Number(tile?.[layerKey]);
+    if (!Number.isFinite(value)) return '#94a3b8';
+    if (layerKey === 'soil_moisture') {
+        if (value < 35) return '#b45309';
+        if (value < 50) return '#f59e0b';
+        if (value < 64) return '#22c55e';
+        return '#0ea5e9';
+    }
+    if (layerKey === 'rainfall') {
+        if (value < 0.8) return '#e0f2fe';
+        if (value < 2.2) return '#7dd3fc';
+        if (value < 5) return '#0284c7';
+        return '#1e3a8a';
+    }
+    if (layerKey === 'rain_forecast') {
+        if (value < 1) return '#f8fafc';
+        if (value < 3) return '#a7f3d0';
+        if (value < 5) return '#10b981';
+        return '#047857';
+    }
+    if (value < 10) return '#bbf7d0';
+    if (value < 15) return '#86efac';
+    if (value < 20) return '#fde68a';
+    return '#a16207';
+}
+
+function renderScene3dSvg(payload, activeLayer) {
+    const model = payload?.model && typeof payload.model === 'object' ? payload.model : {};
+    const grid = model.grid && typeof model.grid === 'object' ? model.grid : {};
+    const columns = Math.max(1, Number(grid.columns) || 7);
+    const rows = Math.max(1, Number(grid.rows) || 5);
+    const terrain = Array.isArray(model.terrain) && model.terrain.length ? model.terrain : buildSampleAgriScene3dPayload().model.terrain;
+    const baseLayers = Array.isArray(payload?.layers) && payload.layers.length
+        ? payload.layers
+        : buildSampleAgriScene3dPayload().layers;
+    const visibleLayerSet = Array.isArray(payload?.visibleLayers) && payload.visibleLayers.length
+        ? new Set(payload.visibleLayers.map(item => String(item)))
+        : null;
+    const layers = baseLayers.filter(layer => !visibleLayerSet || visibleLayerSet.has(String(layer.key || '')));
+    const layerKeys = layers.map(layer => String(layer.key || '')).filter(Boolean);
+    const tileW = 62;
+    const tileH = 34;
+    const originX = 250;
+    const originY = 52;
+    const layerGroups = layerKeys.map(layerKey => {
+        const tiles = terrain.map(tile => {
+            const x = Number(tile.x) || 0;
+            const z = Number(tile.z) || 0;
+            const elevation = Number(tile.elevation) || 0;
+            const cx = originX + (x - z) * (tileW / 2);
+            const cy = originY + (x + z) * (tileH / 2) - elevation * 1.25;
+            const points = [
+                `${cx},${cy - tileH / 2}`,
+                `${cx + tileW / 2},${cy}`,
+                `${cx},${cy + tileH / 2}`,
+                `${cx - tileW / 2},${cy}`,
+            ].join(' ');
+            const value = tile[layerKey];
+            const label = layers.find(layer => layer.key === layerKey)?.label || layerKey;
+            const unit = layers.find(layer => layer.key === layerKey)?.unit || '';
+            const sideDepth = Math.max(4, Math.min(18, elevation * 0.45));
+            return `
+                <g class="scene3d-tile">
+                    <polygon points="${cx - tileW / 2},${cy} ${cx},${cy + tileH / 2} ${cx},${cy + tileH / 2 + sideDepth} ${cx - tileW / 2},${cy + sideDepth}" fill="rgba(15,23,42,0.24)" />
+                    <polygon points="${cx + tileW / 2},${cy} ${cx},${cy + tileH / 2} ${cx},${cy + tileH / 2 + sideDepth} ${cx + tileW / 2},${cy + sideDepth}" fill="rgba(15,23,42,0.16)" />
+                    <polygon points="${points}" fill="${escapeHtml(getSceneLayerColor(tile, layerKey))}" stroke="rgba(15,23,42,0.34)" stroke-width="1.2">
+                        <title>${escapeHtml(`${label}: ${formatMetricValue(value, unit, 1)}`)}</title>
+                    </polygon>
+                    <polyline points="${cx - tileW / 2},${cy} ${cx},${cy + tileH / 2} ${cx + tileW / 2},${cy}" fill="none" stroke="rgba(15,23,42,0.18)" stroke-width="1" />
+                </g>
+            `;
+        }).join('');
+        return `<g class="scene3d-layer" data-layer-key="${escapeHtml(layerKey)}">${tiles}</g>`;
+    }).join('');
+
+    const objects = Array.isArray(model.objects) ? model.objects : [];
+    const objectMarkup = objects.map(item => {
+        const x = Number(item.x) || 0;
+        const z = Number(item.z) || 0;
+        const height = Math.max(10, Number(item.height) || 18);
+        const cx = originX + (x - z) * (tileW / 2);
+        const cy = originY + (x + z) * (tileH / 2) - height;
+        if (item.kind === 'irrigation_line') {
+            return `<path d="M ${cx - 4} ${cy + height} C ${cx + 42} ${cy + height + 16}, ${cx + 72} ${cy + height - 4}, ${cx + 98} ${cy + height + 14}" fill="none" stroke="#38bdf8" stroke-width="4" stroke-linecap="round" opacity="0.88" />`;
+        }
+        return `
+            <g>
+                <line x1="${cx}" y1="${cy + height}" x2="${cx}" y2="${cy}" stroke="#0f172a" stroke-width="4" stroke-linecap="round" />
+                <circle cx="${cx}" cy="${cy}" r="8" fill="#f8fafc" stroke="#38bdf8" stroke-width="3" />
+            </g>
+        `;
+    }).join('');
+
+    const hotspots = Array.isArray(payload?.hotspots) ? payload.hotspots : [];
+    const hotspotMarkup = hotspots.map(item => {
+        const x = Number(item.x) || 0;
+        const z = Number(item.z) || 0;
+        const cx = originX + (x - z) * (tileW / 2);
+        const cy = originY + (x + z) * (tileH / 2) - 22;
+        return `
+            <g class="scene3d-hotspot">
+                <circle cx="${cx}" cy="${cy}" r="7" fill="#f97316" stroke="#fff7ed" stroke-width="2">
+                    <title>${escapeHtml(`${item.label || '关注点'}: ${formatMetricValue(item.value, '', 1)}`)}</title>
+                </circle>
+                <circle cx="${cx}" cy="${cy}" r="14" fill="none" stroke="#fed7aa" stroke-width="2" opacity="0.55" />
+            </g>
+        `;
+    }).join('');
+
+    return `
+        <svg class="scene3d-svg" viewBox="0 0 560 320" role="img" aria-label="3D 环境场景模型">
+            <ellipse cx="282" cy="254" rx="210" ry="44" fill="rgba(15,23,42,0.20)" />
+            ${layerGroups}
+            ${objectMarkup}
+            ${hotspotMarkup}
+        </svg>
+    `;
+}
+
+function renderAgriScene3dMarkup(component) {
+    const state = getAgriScene3dRenderState(component);
+    if (state.error) return `<div class="chart-error">${escapeHtml(state.error)}</div>`;
+    const payload = state.payload || buildSampleAgriScene3dPayload();
+    const screenContract = payload.screen_contract || {};
+    const baseLayers = Array.isArray(payload.layers) && payload.layers.length ? payload.layers : buildSampleAgriScene3dPayload().layers;
+    const visibleLayerSet = Array.isArray(payload.visibleLayers) && payload.visibleLayers.length
+        ? new Set(payload.visibleLayers.map(item => String(item)))
+        : null;
+    const layers = baseLayers.filter(layer => !visibleLayerSet || visibleLayerSet.has(String(layer.key || '')));
+    const requestedLayer = component.props.activeLayer || payload.activeLayer || screenContract.defaultLayer || layers[0]?.key || 'soil_moisture';
+    const activeLayer = layers.some(layer => String(layer.key) === String(requestedLayer))
+        ? requestedLayer
+        : (layers[0]?.key || 'soil_moisture');
+    const binding = payload.analysisBinding || {};
+    const cssAttr = (value) => String(value || '').replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+    const layerActivationCss = layers.map(layer => {
+        const key = cssAttr(layer.key);
+        return `.scene3d-root[data-layer="${key}"] .scene3d-layer[data-layer-key="${key}"]{display:block}.scene3d-root[data-layer="${key}"] .scene3d-layer-btn[data-layer-key="${key}"]{background:#d9f99d;color:#1f2937}`;
+    }).join('');
+    const layerButtons = layers.map(layer => `
+        <button type="button" class="scene3d-layer-btn" data-layer-key="${escapeHtml(layer.key)}" onclick="event.stopPropagation();const root=this.closest('.scene3d-root');if(root){root.dataset.layer=this.dataset.layerKey;}if(window.__iaSetSceneLayer){window.__iaSetSceneLayer('${escapeHtml(String(component.id))}', this.dataset.layerKey);}">
+            ${escapeHtml(layer.label || layer.key)}
+        </button>
+    `).join('');
+
+    const activeLayerInfo = layers.find(layer => layer.key === activeLayer) || layers[0] || {};
+    return `
+        <div class="scene3d-root" data-layer="${escapeHtml(activeLayer)}">
+            <style>
+                .scene3d-root{width:100%;height:100%;display:flex;flex-direction:column;gap:10px;padding:14px 16px;border-radius:18px;background:linear-gradient(155deg,rgba(11,28,34,.97),rgba(25,74,79,.94));color:#f8fcff;overflow:hidden}
+                .scene3d-head{display:flex;justify-content:space-between;gap:12px;align-items:flex-start}
+                .scene3d-title{font-size:19px;font-weight:800;line-height:1.2}
+                .scene3d-sub{margin-top:4px;color:rgba(226,246,249,.78);font-size:11px;line-height:1.45}
+                .scene3d-score{padding:7px 10px;border-radius:999px;background:rgba(167,243,208,.16);color:#bbf7d0;font-size:11px;font-weight:800;white-space:nowrap}
+                .scene3d-view{position:relative;flex:1;min-height:0;border-radius:16px;background:linear-gradient(180deg,rgba(186,230,253,.12),rgba(15,23,42,.14));overflow:hidden}
+                .scene3d-svg{position:absolute;inset:0;width:100%;height:100%;filter:drop-shadow(0 16px 24px rgba(0,0,0,.24))}
+                .scene3d-layer{display:none}
+                .scene3d-controls{display:flex;gap:7px;flex-wrap:wrap}
+                .scene3d-layer-btn{border:1px solid rgba(219,243,248,.18);border-radius:999px;background:rgba(255,255,255,.09);color:#eaffff;padding:7px 10px;font-size:11px;font-weight:800;cursor:pointer}
+                .scene3d-foot{display:flex;justify-content:space-between;gap:12px;color:rgba(226,246,249,.78);font-size:11px}
+                .scene3d-hotspot{filter:drop-shadow(0 8px 14px rgba(249,115,22,.35))}
+                ${layerActivationCss}
+            </style>
+            <div class="scene3d-head">
+                <div>
+                    <div class="scene3d-title">${escapeHtml(component.props.title || screenContract.title || '3D 环境场景')}</div>
+                    <div class="scene3d-sub">${escapeHtml(screenContract.summary || '导入影像生成的三维环境模型。')}</div>
+                </div>
+                <div class="scene3d-score">${escapeHtml(formatMetricValue(binding.environmentScore, '', 1))} · ${escapeHtml(String(binding.environmentLevel || '场景'))}</div>
+            </div>
+            ${state.sourceNote ? `<div class="chart-source-note">${escapeHtml(state.sourceNote)}</div>` : ''}
+            <div class="scene3d-view">${renderScene3dSvg(payload, activeLayer)}</div>
+            <div class="scene3d-controls">${layerButtons}</div>
+            <div class="scene3d-foot">
+                <span>当前图层：${escapeHtml(activeLayerInfo.label || activeLayer)}</span>
+                <span>${escapeHtml(String(binding.riskType || payload.media?.fileName || payload.media?.kind || ''))}</span>
+            </div>
         </div>
     `;
 }
@@ -3556,6 +4048,7 @@ function renderAgricultureComponentMarkup(component, preview = false) {
     if (component.type === 'agri-yield') return renderAgriYieldMarkup(component, preview);
     if (component.type === 'agri-decision') return renderAgriDecisionMarkup(component, preview);
     if (component.type === 'agri-summary') return renderAgriSummaryMarkup(component, preview);
+    if (component.type === 'agri-scene3d') return renderAgriScene3dMarkup(component, preview);
     return '';
 }
 
@@ -3594,6 +4087,7 @@ function loadScreenData(data) {
     let maxId = 0;
     for (const rawComponent of data.components) {
         const component = normalizeComponent(rawComponent);
+        constrainComponentToStage(component);
         maxId = Math.max(maxId, component.id);
         state.components.set(component.id, component);
     }
@@ -3868,6 +4362,7 @@ async function downloadScreenProjectFromCloud() {
 function addComponentAt(type, x, y) {
     const component = createComponent(type, x, y);
     if (!component) return;
+    constrainComponentToStage(component);
     state.components.set(component.id, component);
     setSelectedComponents([component.id], component.id);
     renderAll();
@@ -4042,90 +4537,149 @@ function renderLibrary() {
         </article>
     `).join('');
 }
-function renderStage() {
-    updateStageAppearance();
 
-    const componentMarkup = Array.from(state.components.values()).map(component => {
-        const commonStyle = [
-            `left:${component.x}px`,
-            `top:${component.y}px`,
-            `width:${component.width}px`,
-            `height:${component.height}px`
-        ].join(';');
-        const componentClassNames = getStageComponentClassNames(component.id);
-        const resizeHandles = getResizeHandleMarkup(component.id);
+function getComponentDesignSize(component) {
+    if (!component) return { width: 420, height: 280 };
+    if (component.type === 'chart') return { width: 640, height: 360 };
+    if (component.type === 'weather') return { width: 560, height: 360 };
+    if (component.type === 'agri-sensor') return { width: 560, height: 360 };
+    if (component.type === 'agri-model') return { width: 720, height: 520 };
+    if (component.type === 'agri-climate') return { width: 680, height: 420 };
+    if (component.type === 'agri-yield') return { width: 680, height: 440 };
+    if (component.type === 'agri-decision') return { width: 720, height: 520 };
+    if (component.type === 'agri-summary') return { width: 508, height: 420 };
+    if (component.type === 'agri-scene3d') return { width: 720, height: 520 };
+    return { width: Math.max(Number(component.width) || 420, 1), height: Math.max(Number(component.height) || 280, 1) };
+}
 
-        if (component.type === 'image') {
-            const imageState = getImageRenderState(component);
-            const resolvedImageSrc = imageState.kind === 'image' ? toAbsoluteUrl(imageState.src) : '';
-            const imageHtml = imageState.kind === 'image'
-                ? `<img class="image-fill" src="${escapeHtml(resolvedImageSrc)}" alt="${escapeHtml(component.props.alt || '')}" style="object-fit:${escapeHtml(component.props.objectFit || 'cover')}; border-radius:${Number(component.props.borderRadius) || 0}px;">`
-                : `
-                    <div class="image-placeholder">
-                        <div>
-                            <div class="image-placeholder-title">${escapeHtml(imageState.title)}</div>
-                            <div class="image-placeholder-note">${escapeHtml(imageState.note || '')}</div>
-                        </div>
+function getComponentMinimumSize(component) {
+    if (!component) return { width: 40, height: 40 };
+    if (component.type === 'chart'
+        || component.type === 'weather'
+        || isAgricultureComponentType(component.type)) {
+        return getComponentDesignSize(component);
+    }
+    return { width: 40, height: 40 };
+}
+
+function getComponentContentScale(component) {
+    const design = getComponentDesignSize(component);
+    const width = Math.max(Number(component?.width) || design.width, 1);
+    const height = Math.max(Number(component?.height) || design.height, 1);
+    return {
+        x: clamp(width / design.width, 0.02, 8),
+        y: clamp(height / design.height, 0.02, 8)
+    };
+}
+
+function renderScaledComponentContent(component, innerHtml, className = '') {
+    const design = getComponentDesignSize(component);
+    const scale = getComponentContentScale(component);
+    return `
+        <div class="component-scale-shell">
+            <div class="component-scale-content ${className}" style="width:${design.width}px;height:${design.height}px;transform:scale(${scale.x}, ${scale.y});">
+                ${innerHtml}
+            </div>
+        </div>
+    `;
+}
+
+function withComponentDesignSize(component) {
+    const design = getComponentDesignSize(component);
+    return {
+        ...component,
+        width: design.width,
+        height: design.height,
+        props: component?.props || {}
+    };
+}
+
+function renderStageComponent(component) {
+    const commonStyle = [
+        `left:${component.x}px`,
+        `top:${component.y}px`,
+        `width:${component.width}px`,
+        `height:${component.height}px`
+    ].join(';');
+    const componentClassNames = getStageComponentClassNames(component.id);
+    const resizeHandles = getResizeHandleMarkup(component.id);
+
+    if (component.type === 'image') {
+        const imageState = getImageRenderState(component);
+        const resolvedImageSrc = imageState.kind === 'image' ? toAbsoluteUrl(imageState.src) : '';
+        const imageHtml = imageState.kind === 'image'
+            ? `<img class="image-fill" src="${escapeHtml(resolvedImageSrc)}" alt="${escapeHtml(component.props.alt || '')}" style="object-fit:${escapeHtml(component.props.objectFit || 'cover')}; border-radius:${Number(component.props.borderRadius) || 0}px;">`
+            : `
+                <div class="image-placeholder">
+                    <div>
+                        <div class="image-placeholder-title">${escapeHtml(imageState.title)}</div>
+                        <div class="image-placeholder-note">${escapeHtml(imageState.note || '')}</div>
                     </div>
-                `;
-
-            return `
-                <div class="${componentClassNames} image-component" data-component-id="${component.id}" style="${commonStyle}">
-                    ${imageHtml}
-                    ${resizeHandles}
                 </div>
             `;
-        }
-
-        if (component.type === 'chart') {
-            const chartHtml = getChartPreviewHtml(component);
-            return `
-                <div class="${componentClassNames} chart-component" data-component-id="${component.id}" style="${commonStyle};padding:12px;overflow:hidden;background:#fff;">
-                    ${chartHtml}
-                    ${resizeHandles}
-                </div>
-            `;
-        }
-
-        if (isAgricultureComponentType(component.type)) {
-            const previewDataAttrs = usesWorkflowSource(component.type) ? getPreviewDataAttributes(component) : '';
-            return `
-                <div class="${componentClassNames} agriculture-component" data-component-id="${component.id}" ${previewDataAttrs} style="${commonStyle};padding:14px;overflow:hidden;">
-                    ${renderAgricultureComponentMarkup(component)}
-                    ${resizeHandles}
-                </div>
-            `;
-        }
-
-        if (isWeatherComponentType(component.type)) {
-            return `
-                <div class="${componentClassNames} weather-component" data-component-id="${component.id}" style="${commonStyle};padding:14px;overflow:hidden;">
-                    ${renderWeatherMarkup(component)}
-                    ${resizeHandles}
-                </div>
-            `;
-        }
-
-        const textState = getTextRenderState(component);
-        const textStyle = [
-            `font-size:${Number(component.props.fontSize) || 32}px`,
-            `color:${component.props.color || '#1f2937'}`,
-            `font-weight:${component.props.fontWeight || '700'}`,
-            `background:${component.props.backgroundColor || 'transparent'}`,
-            `justify-content:${getTextJustifyContent(component.props.textAlign)}`,
-            `text-align:${component.props.textAlign || 'left'}`
-        ].join(';');
 
         return `
-            <div class="${componentClassNames} text-component" data-component-id="${component.id}" style="${commonStyle};${textStyle}">
-                <div class="text-component-content">
-                    <div class="text-main-content">${escapeHtml(textState.text)}</div>
-                    ${textState.note ? `<div class="text-source-note">${escapeHtml(textState.note)}</div>` : ''}
-                </div>
+            <div class="${componentClassNames} image-component" data-component-id="${component.id}" data-component-type="${component.type}" style="${commonStyle}">
+                ${imageHtml}
                 ${resizeHandles}
             </div>
         `;
-    }).join('');
+    }
+
+    if (component.type === 'chart') {
+        const chartHtml = getChartPreviewHtml(withComponentDesignSize(component));
+        return `
+            <div class="${componentClassNames} chart-component" data-component-id="${component.id}" data-component-type="${component.type}" style="${commonStyle};overflow:hidden;background:#fff;">
+                ${renderScaledComponentContent(component, chartHtml, 'chart-scale-content')}
+                ${resizeHandles}
+            </div>
+        `;
+    }
+
+    if (isAgricultureComponentType(component.type)) {
+        const previewDataAttrs = usesWorkflowSource(component.type) ? getPreviewDataAttributes(component) : '';
+        return `
+            <div class="${componentClassNames} agriculture-component" data-component-id="${component.id}" data-component-type="${component.type}" ${previewDataAttrs} style="${commonStyle};overflow:hidden;">
+                ${renderScaledComponentContent(component, renderAgricultureComponentMarkup(component), 'agriculture-scale-content')}
+                ${resizeHandles}
+            </div>
+        `;
+    }
+
+    if (isWeatherComponentType(component.type)) {
+        return `
+            <div class="${componentClassNames} weather-component" data-component-id="${component.id}" data-component-type="${component.type}" style="${commonStyle};overflow:hidden;">
+                ${renderScaledComponentContent(component, renderWeatherMarkup(component), 'weather-scale-content')}
+                ${resizeHandles}
+            </div>
+        `;
+    }
+
+    const textState = getTextRenderState(component);
+    const textStyle = [
+        `font-size:${Number(component.props.fontSize) || 32}px`,
+        `color:${component.props.color || '#1f2937'}`,
+        `font-weight:${component.props.fontWeight || '700'}`,
+        `background:${component.props.backgroundColor || 'transparent'}`,
+        `justify-content:${getTextJustifyContent(component.props.textAlign)}`,
+        `text-align:${component.props.textAlign || 'left'}`
+    ].join(';');
+
+    return `
+        <div class="${componentClassNames} text-component" data-component-id="${component.id}" data-component-type="${component.type}" style="${commonStyle};${textStyle}">
+            <div class="text-component-content">
+                <div class="text-main-content">${escapeHtml(textState.text)}</div>
+                ${textState.note ? `<div class="text-source-note">${escapeHtml(textState.note)}</div>` : ''}
+            </div>
+            ${resizeHandles}
+        </div>
+    `;
+}
+
+function renderStage() {
+    updateStageAppearance();
+
+    const componentMarkup = Array.from(state.components.values()).map(component => renderStageComponent(component)).join('');
 
     const guideMarkup = [
         ...stageGuides.vertical.map(value => `<div class="screen-align-guide vertical" style="left:${value}px;"></div>`),
@@ -4591,10 +5145,10 @@ function renderAgriInsightSettings(component) {
     const source = normalizeSource(component.props.source);
     const state = getStructuredAgriRenderState(component);
     const hints = {
-        'agri-model': '推荐绑定 abstract_data_model 节点输出，组件会自动读取 screen_contract.overview 与维度条形数据。',
-        'agri-climate': '可绑定 abstract_data_model、forecast 或 climate 类字符串端口，组件会自动寻找气候预测字段。',
-        'agri-yield': '可绑定 abstract_data_model、yield 或产量预测类字符串端口，组件会自动寻找 yield_index 与 factor_bars。',
-        'agri-decision': '可绑定 abstract_data_model、decision 或辅助决策类字符串端口，组件会自动寻找 top_decision 与 modules 列表。'
+        'agri-model': '推荐绑定 environment_model 节点输出，组件会自动读取 screen_contract.overview 与维度条形数据。',
+        'agri-climate': '可绑定 environment_model、forecast 或 climate 类字符串端口，组件会自动寻找气候预测字段。',
+        'agri-yield': '可绑定 environment_model、yield 或产量预测类字符串端口，组件会自动寻找 yield_index 与 factor_bars。',
+        'agri-decision': '可绑定 environment_model、decision 或辅助决策类字符串端口，组件会自动寻找 top_decision 与 modules 列表。'
     };
 
     return `
@@ -4658,6 +5212,42 @@ function renderAgriSummarySettings(component) {
     `;
 }
 
+function renderAgriScene3dSettings(component) {
+    const source = normalizeSource(component.props.source);
+    const state = getAgriScene3dRenderState(component);
+    const payload = state.payload || buildSampleAgriScene3dPayload();
+    const layers = Array.isArray(payload.layers) && payload.layers.length ? payload.layers : buildSampleAgriScene3dPayload().layers;
+
+    return `
+        <section class="prop-section">
+            <h3>组件内容</h3>
+            <div>
+                <label class="prop-label" for="agriSceneTitleInput">标题</label>
+                <input class="prop-input" id="agriSceneTitleInput" type="text" value="${escapeHtml(component.props.title || '')}">
+            </div>
+            <div>
+                <label class="prop-label" for="agriSceneLayerInput">默认图层</label>
+                <select class="prop-select" id="agriSceneLayerInput">
+                    ${layers.map(layer => `<option value="${escapeHtml(layer.key)}" ${layer.key === (component.props.activeLayer || payload.activeLayer) ? 'selected' : ''}>${escapeHtml(layer.label || layer.key)}</option>`).join('')}
+                </select>
+            </div>
+            ${source.mode === SOURCE_MODE_MANUAL ? `
+                <div>
+                    <label class="prop-label" for="agriSceneJsonInput">手动场景 JSON</label>
+                    <textarea class="prop-textarea" id="agriSceneJsonInput" spellcheck="false">${escapeHtml(component.props.jsonText || '')}</textarea>
+                </div>
+            ` : `
+                <div>
+                    <label class="prop-label">当前绑定</label>
+                    <div class="source-preview-box">${escapeHtml(state.sourceNote || '工作流端口')}</div>
+                </div>
+            `}
+            <p class="prop-hint">推荐绑定 media_scene_model 节点输出。组件会读取模型网格、地块指标和图层颜色，并支持在大屏中切换土壤湿度、降雨状况、降雨预测等图层。</p>
+            ${state.error ? `<div class="chart-error">${escapeHtml(state.error)}</div>` : ''}
+        </section>
+    `;
+}
+
 function renderComponentDataSection(component) {
     if (usesWorkflowSource(component.type)) return renderSourceSection(component);
     if (isAgricultureComponentType(component.type)) return renderAgricultureDataSourceSection(component);
@@ -4672,6 +5262,7 @@ function renderComponentSettingsSection(component) {
     if (component.type === 'agri-sensor') return renderSensorSettings(component);
     if (isAgriInsightComponentType(component.type)) return renderAgriInsightSettings(component);
     if (component.type === 'agri-summary') return renderAgriSummarySettings(component);
+    if (component.type === 'agri-scene3d') return renderAgriScene3dSettings(component);
     if (component.type === 'weather') return renderWeatherSettings(component);
     return '';
 }
@@ -4692,11 +5283,11 @@ function renderMultiSelectionProperties(components) {
                 </div>
                 <div>
                     <label class="prop-label" for="multiCompWidthInput-${component.id}">宽度</label>
-                    <input class="prop-input" id="multiCompWidthInput-${component.id}" type="number" min="40" value="${component.width}">
+                    <input class="prop-input" id="multiCompWidthInput-${component.id}" type="number" min="${getComponentMinimumSize(component).width}" value="${component.width}">
                 </div>
                 <div>
                     <label class="prop-label" for="multiCompHeightInput-${component.id}">高度</label>
-                    <input class="prop-input" id="multiCompHeightInput-${component.id}" type="number" min="40" value="${component.height}">
+                    <input class="prop-input" id="multiCompHeightInput-${component.id}" type="number" min="${getComponentMinimumSize(component).height}" value="${component.height}">
                 </div>
             </div>
             <div>
@@ -4725,6 +5316,7 @@ function renderMultiSelectionProperties(components) {
 function renderProperties() {
     const selectedComponents = getSelectedComponents();
     const component = getSelectedComponent();
+    const minimumSize = component ? getComponentMinimumSize(component) : { width: 40, height: 40 };
 
     if (!selectedComponents.length) {
         refs.propContent.innerHTML = `
@@ -4776,11 +5368,11 @@ function renderProperties() {
                 </div>
                 <div>
                     <label class="prop-label" for="compWidthInput">宽度</label>
-                    <input class="prop-input" id="compWidthInput" type="number" min="40" value="${component.width}">
+                    <input class="prop-input" id="compWidthInput" type="number" min="${minimumSize.width}" value="${component.width}">
                 </div>
                 <div>
                     <label class="prop-label" for="compHeightInput">高度</label>
-                    <input class="prop-input" id="compHeightInput" type="number" min="40" value="${component.height}">
+                    <input class="prop-input" id="compHeightInput" type="number" min="${minimumSize.height}" value="${component.height}">
                 </div>
             </div>
         </section>
@@ -5041,8 +5633,8 @@ function bindComponentPropertyInputs(component, multiComponents = []) {
 
             bindMultiNumeric(`multiCompXInput-${item.id}`, 'x', 0, state.page.width);
             bindMultiNumeric(`multiCompYInput-${item.id}`, 'y', 0, state.page.height);
-            bindMultiNumeric(`multiCompWidthInput-${item.id}`, 'width', 40, state.page.width);
-            bindMultiNumeric(`multiCompHeightInput-${item.id}`, 'height', 40, state.page.height);
+            bindMultiNumeric(`multiCompWidthInput-${item.id}`, 'width', getComponentMinimumSize(item).width, state.page.width);
+            bindMultiNumeric(`multiCompHeightInput-${item.id}`, 'height', getComponentMinimumSize(item).height, state.page.height);
         });
 
         const deleteBtn = document.getElementById('deleteComponentBtn');
@@ -5067,8 +5659,8 @@ function bindComponentPropertyInputs(component, multiComponents = []) {
 
     bindNumeric('compXInput', 'x', 0, state.page.width);
     bindNumeric('compYInput', 'y', 0, state.page.height);
-    bindNumeric('compWidthInput', 'width', 40, state.page.width);
-    bindNumeric('compHeightInput', 'height', 40, state.page.height);
+    bindNumeric('compWidthInput', 'width', getComponentMinimumSize(component).width, state.page.width);
+    bindNumeric('compHeightInput', 'height', getComponentMinimumSize(component).height, state.page.height);
 
     const deleteBtn = document.getElementById('deleteComponentBtn');
     if (deleteBtn) {
@@ -5336,6 +5928,34 @@ function bindComponentPropertyInputs(component, multiComponents = []) {
         return;
     }
 
+    if (component.type === 'agri-scene3d') {
+        const titleInput = document.getElementById('agriSceneTitleInput');
+        const layerInput = document.getElementById('agriSceneLayerInput');
+        const jsonInput = document.getElementById('agriSceneJsonInput');
+
+        if (titleInput) {
+            titleInput.addEventListener('input', () => {
+                component.props.title = titleInput.value;
+                renderStage();
+            });
+        }
+
+        if (layerInput) {
+            layerInput.addEventListener('change', () => {
+                component.props.activeLayer = layerInput.value;
+                renderStage();
+            });
+        }
+
+        if (jsonInput) {
+            jsonInput.addEventListener('input', () => {
+                component.props.jsonText = jsonInput.value;
+                renderAll();
+            });
+        }
+        return;
+    }
+
     if (component.type === 'agri-sensor') {
         const titleInput = document.getElementById('sensorTitleInput');
         const dataModeInput = document.getElementById('agriDataModeInput');
@@ -5578,25 +6198,27 @@ function bindComponentPropertyInputs(component, multiComponents = []) {
 }
 
 function constrainComponentToStage(component) {
-    component.width = clamp(component.width, 40, state.page.width);
-    component.height = clamp(component.height, 40, state.page.height);
+    const minimumSize = getComponentMinimumSize(component);
+    component.width = clamp(component.width, minimumSize.width, state.page.width);
+    component.height = clamp(component.height, minimumSize.height, state.page.height);
     component.x = clamp(component.x, 0, Math.max(0, state.page.width - component.width));
     component.y = clamp(component.y, 0, Math.max(0, state.page.height - component.height));
 }
 
 function applyResizeEdges(component, left, right, top, bottom) {
-    if (right - left < 40) {
+    const minimumSize = getComponentMinimumSize(component);
+    if (right - left < minimumSize.width) {
         if (dragState?.interaction === 'resize-handle' && dragState.handle?.includes('w')) {
-            left = right - 40;
+            left = right - minimumSize.width;
         } else {
-            right = left + 40;
+            right = left + minimumSize.width;
         }
     }
-    if (bottom - top < 40) {
+    if (bottom - top < minimumSize.height) {
         if (dragState?.interaction === 'resize-handle' && dragState.handle?.includes('n')) {
-            top = bottom - 40;
+            top = bottom - minimumSize.height;
         } else {
-            bottom = top + 40;
+            bottom = top + minimumSize.height;
         }
     }
     component.x = left;
@@ -5753,7 +6375,7 @@ function applyMoveDrag(point) {
 function applyHandleResize(component, point) {
     if (!dragState || dragState.interaction !== 'resize-handle' || !component) return;
 
-    const minimumSize = 40;
+    const minimumSize = getComponentMinimumSize(component);
     const original = dragState.original;
     const originalRight = original.x + original.width;
     const originalBottom = original.y + original.height;
@@ -5764,16 +6386,16 @@ function applyHandleResize(component, point) {
     let bottom = originalBottom;
 
     if (dragState.handle.includes('w')) {
-        left = clamp(point.x, 0, originalRight - minimumSize);
+        left = clamp(point.x, 0, originalRight - minimumSize.width);
     }
     if (dragState.handle.includes('e')) {
-        right = clamp(point.x, original.x + minimumSize, state.page.width);
+        right = clamp(point.x, original.x + minimumSize.width, state.page.width);
     }
     if (dragState.handle.includes('n')) {
-        top = clamp(point.y, 0, originalBottom - minimumSize);
+        top = clamp(point.y, 0, originalBottom - minimumSize.height);
     }
     if (dragState.handle.includes('s')) {
-        bottom = clamp(point.y, original.y + minimumSize, state.page.height);
+        bottom = clamp(point.y, original.y + minimumSize.height, state.page.height);
     }
 
     const snapResult = getResizeSnapResult(component.id, { left, right, top, bottom }, dragState.interaction, dragState.handle);
@@ -5785,11 +6407,12 @@ function applyResizeToolDrag(component, point) {
     if (!dragState || dragState.interaction !== 'resize-tool' || !component) return;
 
     const original = dragState.original;
+    const minimumSize = getComponentMinimumSize(component);
     const edges = {
         left: original.x,
-        right: clamp(original.x + original.width + (point.x - dragState.startX), original.x + 40, state.page.width),
+        right: clamp(original.x + original.width + (point.x - dragState.startX), original.x + minimumSize.width, state.page.width),
         top: original.y,
-        bottom: clamp(original.y + original.height + (point.y - dragState.startY), original.y + 40, state.page.height)
+        bottom: clamp(original.y + original.height + (point.y - dragState.startY), original.y + minimumSize.height, state.page.height)
     };
     const snapResult = getResizeSnapResult(component.id, edges, dragState.interaction);
     setStageGuides(snapResult.guides);
@@ -5969,7 +6592,12 @@ function bindLibraryDragAndDrop() {
         const type = event.dataTransfer.getData('text/plain');
         if (!type) return;
         const point = getPointInStage(event.clientX, event.clientY);
-        addComponentAt(type, clamp(point.x - 80, 0, state.page.width - 40), clamp(point.y - 40, 0, state.page.height - 40));
+        const previewComponent = createComponent(type, 0, 0);
+        if (!previewComponent) return;
+        state.nextId = Math.max(1, state.nextId - 1);
+        const x = clamp(point.x - previewComponent.width / 2, 0, Math.max(0, state.page.width - previewComponent.width));
+        const y = clamp(point.y - previewComponent.height / 2, 0, Math.max(0, state.page.height - previewComponent.height));
+        addComponentAt(type, x, y);
     });
 }
 
@@ -6180,10 +6808,10 @@ function buildPreviewHtml() {
 
         if (component.type === 'chart') {
             const previewDataAttrs = getPreviewDataAttributes(component);
-            const chartHtml = getChartPreviewHtml(component);
+            const chartHtml = getChartPreviewHtml(withComponentDesignSize(component));
             return `
-                <div ${previewDataAttrs} style="position:absolute;left:${component.x}px;top:${component.y}px;width:${component.width}px;height:${component.height}px;overflow:hidden;background:#fff;padding:12px;">
-                    ${chartHtml}
+                <div ${previewDataAttrs} style="position:absolute;left:${component.x}px;top:${component.y}px;width:${component.width}px;height:${component.height}px;overflow:hidden;background:#fff;">
+                    ${renderScaledComponentContent(component, chartHtml, 'chart-scale-content')}
                 </div>
             `;
         }
@@ -6191,16 +6819,16 @@ function buildPreviewHtml() {
         if (isAgricultureComponentType(component.type)) {
             const previewDataAttrs = usesWorkflowSource(component.type) ? getPreviewDataAttributes(component) : '';
             return `
-                <div ${previewDataAttrs} style="position:absolute;left:${component.x}px;top:${component.y}px;width:${component.width}px;height:${component.height}px;overflow:hidden;padding:14px;">
-                    ${renderAgricultureComponentMarkup(component, true)}
+                <div ${previewDataAttrs} style="position:absolute;left:${component.x}px;top:${component.y}px;width:${component.width}px;height:${component.height}px;overflow:hidden;">
+                    ${renderScaledComponentContent(component, renderAgricultureComponentMarkup(component, true), 'agriculture-scale-content')}
                 </div>
             `;
         }
 
         if (isWeatherComponentType(component.type)) {
             return `
-                <div style="position:absolute;left:${component.x}px;top:${component.y}px;width:${component.width}px;height:${component.height}px;overflow:hidden;padding:14px;">
-                    ${renderWeatherMarkup(component, true)}
+                <div style="position:absolute;left:${component.x}px;top:${component.y}px;width:${component.width}px;height:${component.height}px;overflow:hidden;">
+                    ${renderScaledComponentContent(component, renderWeatherMarkup(component, true), 'weather-scale-content')}
                 </div>
             `;
         }
@@ -6244,6 +6872,28 @@ function buildPreviewHtml() {
             overflow: hidden;
             box-shadow: 0 24px 60px rgba(19, 31, 43, 0.18);
             border-radius: 24px;
+        }
+        .component-scale-shell {
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+            position: relative;
+            border-radius: inherit;
+        }
+        .component-scale-content {
+            position: absolute;
+            left: 0;
+            top: 0;
+            transform-origin: top left;
+            box-sizing: border-box;
+        }
+        .chart-scale-content {
+            padding: 12px;
+            background: #fff;
+        }
+        .agriculture-scale-content,
+        .weather-scale-content {
+            padding: 14px;
         }
         .chart-wrapper {
             width: 100%;
@@ -6396,31 +7046,31 @@ function buildPreviewHtml() {
             line-height: 1.6;
         }
         .agri-summary-lead {
-            padding: 14px 16px;
-            border-radius: 16px;
+            padding: 10px 12px;
+            border-radius: 14px;
             background: rgba(230, 249, 242, 0.10);
             border: 1px solid rgba(194, 236, 229, 0.10);
             color: #ffffff;
-            font-size: 15px;
+            font-size: 13px;
             font-weight: 700;
-            line-height: 1.7;
+            line-height: 1.45;
         }
         .agri-summary-secondary {
             color: rgba(229, 246, 249, 0.86);
-            font-size: 12px;
-            line-height: 1.6;
+            font-size: 11px;
+            line-height: 1.45;
         }
         .agri-summary-metric-grid {
             display: grid;
             grid-template-columns: repeat(2, minmax(0, 1fr));
-            gap: 10px;
+            gap: 8px;
         }
         .agri-summary-metric-card {
             display: flex;
             flex-direction: column;
-            gap: 5px;
-            padding: 12px;
-            border-radius: 16px;
+            gap: 4px;
+            padding: 9px 10px;
+            border-radius: 14px;
             background: rgba(230, 249, 242, 0.08);
             border: 1px solid rgba(194, 236, 229, 0.10);
         }
@@ -6430,18 +7080,18 @@ function buildPreviewHtml() {
         }
         .agri-summary-metric-value {
             color: #ffffff;
-            font-size: 19px;
+            font-size: 16px;
             font-weight: 800;
-            line-height: 1.3;
+            line-height: 1.2;
             word-break: break-word;
         }
-        .agri-summary-sections { display: grid; gap: 10px; }
+        .agri-summary-sections { display: grid; gap: 8px; }
         .agri-summary-section {
             display: flex;
             flex-direction: column;
-            gap: 8px;
-            padding: 12px;
-            border-radius: 16px;
+            gap: 6px;
+            padding: 9px 10px;
+            border-radius: 14px;
             background: rgba(230, 249, 242, 0.06);
             border: 1px solid rgba(194, 236, 229, 0.08);
         }
@@ -6451,13 +7101,13 @@ function buildPreviewHtml() {
             font-weight: 700;
             letter-spacing: 0.04em;
         }
-        .agri-summary-item-list { display: grid; gap: 8px; }
+        .agri-summary-item-list { display: grid; gap: 6px; }
         .agri-summary-item {
             position: relative;
             padding-left: 14px;
             color: rgba(234, 248, 252, 0.88);
-            font-size: 12px;
-            line-height: 1.6;
+            font-size: 11px;
+            line-height: 1.45;
         }
         .agri-summary-item::before {
             content: '';
@@ -6630,6 +7280,33 @@ function buildPreviewHtml() {
         const AGRI_API_ORIGIN = ${JSON.stringify(backendOrigin)};
         const WEATHER_FORECAST_ENDPOINT = ${JSON.stringify(`${backendOrigin}/api/weather/forecast`)};
         const WORKFLOW_RUNTIME_STORAGE_KEY = 'ia.lowcode.workflow.runtime.v1';
+        const SCENE_LAYER_STORAGE_KEY = 'ia.lowcode.scene3d.layer.v1';
+
+        function loadSceneLayerState() {
+            try {
+                return JSON.parse(sessionStorage.getItem(SCENE_LAYER_STORAGE_KEY) || '{}') || {};
+            } catch (error) {
+                return {};
+            }
+        }
+        function saveSceneLayerState(state) {
+            sessionStorage.setItem(SCENE_LAYER_STORAGE_KEY, JSON.stringify(state || {}));
+        }
+        window.__iaSetSceneLayer = (componentId, layerKey) => {
+            const key = String(componentId || '').trim();
+            const layer = String(layerKey || '').trim();
+            if (!key || !layer) return;
+            const state = loadSceneLayerState();
+            state[key] = layer;
+            saveSceneLayerState(state);
+        };
+        (function applyPersistedSceneLayers() {
+            const state = loadSceneLayerState();
+            Object.entries(state).forEach(([componentId, layer]) => {
+                const root = document.querySelector('[data-component-id="' + componentId + '"] .scene3d-root');
+                if (root) root.dataset.layer = String(layer || '');
+            });
+        })();
 
         function getWorkflowRuntimeSnapshot() {
             try {
@@ -6792,12 +7469,38 @@ function buildPreviewHtml() {
 </html>`;
 }
 
-function runPreview() {
-    const html = buildPreviewHtml();
-    const blob = new Blob([html], { type: 'text/html;charset=utf-8' });
-    const url = URL.createObjectURL(blob);
-    window.open(url, '_blank', 'noopener');
-    setTimeout(() => URL.revokeObjectURL(url), 60000);
+async function runPreview() {
+    const originalText = refs.runBtn?.textContent || '';
+    if (refs.runBtn) {
+        refs.runBtn.disabled = true;
+        refs.runBtn.textContent = '正在运行工作流...';
+    }
+
+    try {
+        const runtimeSummary = await refreshBoundWorkflowRuntimeForScreen();
+        if (runtimeSummary.failed.length) {
+            console.warn('大屏绑定工作流运行失败', runtimeSummary.failed);
+        }
+        renderAll();
+
+        const html = buildPreviewHtml();
+        const blob = new Blob([html], { type: 'text/html;charset=utf-8' });
+        const url = URL.createObjectURL(blob);
+        window.open(url, '_blank', 'noopener');
+        setTimeout(() => URL.revokeObjectURL(url), 60000);
+    } catch (error) {
+        showSharedDialog({
+            title: '运行大屏失败',
+            bodyHtml: `<div>工作流执行或页面生成失败：${escapeHtml(error?.message || '未知错误')}</div>`,
+            confirmText: '知道了',
+            showCancel: false
+        });
+    } finally {
+        if (refs.runBtn) {
+            refs.runBtn.disabled = false;
+            refs.runBtn.textContent = originalText || '运行生成网页';
+        }
+    }
 }
 
 function appendTimestampQuery(url, key = '__ts', value = Date.now()) {
@@ -6908,6 +7611,7 @@ function seedDemoProject() {
 }
 
 function initializeProject() {
+    ensureDemoProjects();
     const { entry, projectId } = getQuery();
     if (loadImportedProjectFromSession()) return;
 
@@ -7052,12 +7756,39 @@ function bindTopbarActions() {
 function bindExternalRefresh() {
     window.addEventListener('focus', renderAll);
     window.addEventListener('storage', (event) => {
-        if (event.key === 'ia.lowcode.workflow.runtime.v1' || event.key === 'ia.lowcode.projects.v1') {
+        if (event.key === 'ia.lowcode.workflow.runtime.v1') {
+            refreshWorkflowBoundComponents();
+            return;
+        }
+        if (event.key === 'ia.lowcode.projects.v1') {
             renderAll();
         }
     });
     window.setInterval(tickEditorWeatherSync, 1000);
     tickEditorWeatherSync();
+}
+
+function refreshWorkflowBoundComponents() {
+    const targetIds = Array.from(state.components.values())
+        .filter(component => usesWorkflowSource(component.type) && normalizeSource(component?.props?.source).mode === SOURCE_MODE_WORKFLOW_PORT)
+        .map(component => component.id);
+    if (!targetIds.length) return;
+
+    targetIds.forEach((componentId) => {
+        const component = state.components.get(componentId);
+        if (!component) return;
+        const element = refs.stage.querySelector(`[data-component-id="${componentId}"]`);
+        if (!element) return;
+        const wrapper = document.createElement('div');
+        wrapper.innerHTML = renderStageComponent(component).trim();
+        const replacement = wrapper.firstElementChild;
+        if (!replacement) return;
+        element.replaceWith(replacement);
+    });
+
+    if (state.selectedId && targetIds.includes(state.selectedId)) {
+        renderProperties();
+    }
 }
 
 function init() {
@@ -7070,6 +7801,12 @@ function init() {
     bindTopbarActions();
     bindExternalRefresh();
     renderAll();
+    window.__iaSetSceneLayer = (componentId, layerKey) => {
+        const id = Number(componentId);
+        const component = state.components.get(id);
+        if (!component || component.type !== 'agri-scene3d') return;
+        component.props.activeLayer = String(layerKey || component.props.activeLayer || 'soil_moisture');
+    };
 }
 
 init();

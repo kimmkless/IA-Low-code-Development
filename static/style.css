@@ -599,7 +599,7 @@ body {
 }
 .flow-node {
     position: absolute;
-    min-width: 180px;
+    min-width: 220px;
     background: white;
     border-radius: 12px;
     box-shadow: 0 4px 12px rgba(0,0,0,0.15);
@@ -685,19 +685,21 @@ body {
     display: flex;
     align-items: center;
     gap: 8px;
+    min-height: 40px;
 }
 .node-title-wrap {
     display: inline-flex;
     align-items: center;
     gap: 8px;
     min-width: 0;
+    flex: 1 1 auto;
 }
 .node-title-icon {
     font-size: 15px;
     line-height: 1;
 }
 .node-body {
-    padding: 12px 10px;
+    padding: 14px 12px 18px;
     font-size: 12px;
     background: #fff;
     border-radius: 0 0 10px 10px;
@@ -709,7 +711,11 @@ body {
     padding: 2px 8px;
     border-radius: 20px;
     font-size: 10px;
-    margin-left: auto;
+    max-width: 46%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    flex: 0 1 auto;
 }
 .delete-node-btn {
     background: none;

@@ -4,7 +4,8 @@ from typing import Any
 
 
 DATA_SOURCE_TYPES = {"get_sensor_info", "db_query"}
-DATA_CONSUMER_TYPES = {"environment_model", "analytics_summary", "abstract_data_model", "advanced_prediction", "output"}
+DATA_ANALYSIS_TYPES = {"environment_model", "analytics_summary", "advanced_prediction", "media_scene_model"}
+DATA_CONSUMER_TYPES = DATA_ANALYSIS_TYPES | {"output"}
 
 
 def _props(node: dict[str, Any]) -> dict[str, Any]:
@@ -106,44 +107,39 @@ def validate_workflow_static(nodes: list[dict[str, Any]]) -> tuple[bool, list[st
     unreachable = [node for node in nodes if node.get("id") not in reachable]
     if unreachable:
         labels = "、".join(_node_label(node) for node in unreachable[:5])
-        messages.append(f"静态检测：存在未连入工作流的数据孤岛：{labels}")
+        messages.append(f"静态检测：存在未连接到开始节点的节点：{labels}")
 
     _, topo_warnings = topological_order([node for node in nodes if node.get("id") in reachable])
     messages.extend(topo_warnings)
 
     source_nodes = [node for node in nodes if node.get("type") in DATA_SOURCE_TYPES and node.get("id") in reachable]
-    if not source_nodes:
-        messages.append("静态检测：工作流没有动态数据源，必须至少包含 get_sensor_info 或 db_query。")
-
     env_nodes = [node for node in nodes if node.get("type") == "environment_model" and node.get("id") in reachable]
-    if not env_nodes:
-        messages.append("静态检测：缺少环境建模节点 environment_model，目标链路必须为 数据采集 → 建模 → 分析 → 输出 → 可视化。")
-
     output_nodes = [node for node in nodes if node.get("type") == "output" and node.get("id") in reachable]
-    if not output_nodes:
-        messages.append("静态检测：缺少 output 节点，大屏只能绑定 output 节点暴露的数据。")
+    analysis_nodes = [node for node in nodes if node.get("type") in DATA_ANALYSIS_TYPES and node.get("id") in reachable]
 
     for node in nodes:
         if node.get("id") not in reachable:
             continue
         node_type = node.get("type")
         props = _props(node)
-        if node_type in DATA_SOURCE_TYPES:
-            if not props.get("targetVariableId"):
-                messages.append(f"静态检测：数据源节点 {_node_label(node)} 未配置输出变量，后续节点无法通过连线获得数据。")
+
+        if node_type in DATA_SOURCE_TYPES and not props.get("targetVariableId"):
+            messages.append(f"静态检测：数据源节点 {_node_label(node)} 未配置输出变量，后续节点无法获得数据。")
         elif node_type == "environment_model":
-            if not props.get("inputVariableId"):
-                messages.append(f"静态检测：{_node_label(node)} 缺少 inputVariableId，不能直接凭经验建模。")
             if not props.get("targetVariableId"):
                 messages.append(f"静态检测：{_node_label(node)} 未配置输出变量，分析节点无法继续消费模型结果。")
-        elif node_type in {"analytics_summary", "abstract_data_model", "advanced_prediction"}:
+        elif node_type in {"analytics_summary", "advanced_prediction", "media_scene_model"}:
             if not props.get("inputVariableId"):
-                messages.append(f"静态检测：{_node_label(node)} 缺少上游输入变量，禁止直接访问 API / 数据库。")
+                messages.append(f"静态检测：{_node_label(node)} 是数据分析节点，建议绑定 environment_model 输出变量形成联动。")
+        if node_type == "media_scene_model" and not (props.get("mediaDataUrl") or props.get("mediaUrl")):
+            messages.append(f"静态检测：{_node_label(node)} 缺少导入图片/视频或媒体地址，无法生成三维场景模型。")
         elif node_type == "output" and not props.get("variableId"):
-            messages.append(f"静态检测：输出节点 {_node_label(node)} 未绑定模型或分析结果变量。")
+            messages.append(f"静态检测：输出节点 {_node_label(node)} 未绑定变量。")
+
+    if analysis_nodes and not source_nodes and any(_props(node).get("inputVariableId") for node in analysis_nodes):
+        messages.append("静态检测：存在依赖上游输入的数据分析节点，但没有 get_sensor_info 或 db_query 数据源。")
 
     if source_nodes and env_nodes:
-        source_ids = {node.get("id") for node in source_nodes}
         reaches_env = False
         for source in source_nodes:
             downstream = _reachable_nodes(source.get("id"), nodes_map)
@@ -182,18 +178,19 @@ def detect_static_workflow(
         reasons.extend(topo_warnings)
 
     source_nodes = [node for node in nodes if node.get("type") in DATA_SOURCE_TYPES]
-    if not source_nodes:
-        reasons.append("未检测到数据源节点")
-
-    if not edges:
-        reasons.append("节点未建立数据连接")
+    analysis_nodes = [node for node in nodes if node.get("type") in DATA_ANALYSIS_TYPES]
 
     data_written_variables = {
         str(_props(node).get("targetVariableId"))
         for node in source_nodes
         if _props(node).get("targetVariableId")
     }
-    dynamic_variables = set(data_written_variables)
+    model_written_variables = {
+        str(_props(node).get("targetVariableId"))
+        for node in nodes
+        if node.get("type") == "environment_model" and _props(node).get("targetVariableId")
+    }
+    dynamic_variables = set(data_written_variables) | model_written_variables
     changed = True
     while changed:
         changed = False
@@ -205,30 +202,70 @@ def detect_static_workflow(
                 dynamic_variables.add(str(target_id))
                 changed = True
 
-    output_nodes = [node for node in nodes if node.get("type") == "output"]
-    if output_nodes:
-        for output in output_nodes:
-            variable_id = _props(output).get("variableId")
-            if not variable_id or str(variable_id) not in dynamic_variables:
-                reasons.append(f"输出节点 {_node_label(output)} 不依赖上游动态数据")
-    else:
-        reasons.append("未检测到输出节点")
-
-    dynamic_input_nodes = [
-        node for node in nodes
-        if node.get("type") in DATA_CONSUMER_TYPES
-        and (_props(node).get("inputVariableId") or _props(node).get("variableId"))
-    ]
-    if not dynamic_input_nodes and not source_nodes:
-        reasons.append("所有节点输入均为固定值")
-
+    if analysis_nodes and not source_nodes:
+        reasons.append("存在数据分析节点，但未检测到数据源节点")
     if previous_port_values is not None and current_port_values is not None and previous_port_values == current_port_values:
         reasons.append("数据未发生变化，运行结果恒定")
+
+    variable_producers: dict[str, list[dict[str, Any]]] = {}
+    variable_consumers: dict[str, list[dict[str, Any]]] = {}
+    variable_links: list[dict[str, Any]] = []
+    for node in nodes:
+        node_id = node.get("id")
+        node_type = str(node.get("type") or "")
+        node_label = _node_label(node)
+        props = _props(node)
+        target_id = props.get("targetVariableId")
+        if target_id:
+            key = str(target_id)
+            variable_producers.setdefault(key, []).append({
+                "nodeId": node_id,
+                "nodeType": node_type,
+                "nodeLabel": node_label,
+            })
+        input_id = props.get("inputVariableId")
+        if input_id:
+            key = str(input_id)
+            variable_consumers.setdefault(key, []).append({
+                "nodeId": node_id,
+                "nodeType": node_type,
+                "nodeLabel": node_label,
+                "field": "inputVariableId",
+            })
+        variable_id = props.get("variableId")
+        if variable_id:
+            key = str(variable_id)
+            variable_consumers.setdefault(key, []).append({
+                "nodeId": node_id,
+                "nodeType": node_type,
+                "nodeLabel": node_label,
+                "field": "variableId",
+            })
+
+    for variable_id, producers in variable_producers.items():
+        consumers = variable_consumers.get(variable_id) or []
+        for producer in producers:
+            if not consumers:
+                variable_links.append({
+                    "variableId": variable_id,
+                    "producer": producer,
+                    "consumer": None,
+                })
+                continue
+            for consumer in consumers:
+                variable_links.append({
+                    "variableId": variable_id,
+                    "producer": producer,
+                    "consumer": consumer,
+                })
 
     return {
         "isStatic": bool(reasons),
         "reasons": reasons,
         "topologicalOrder": order,
         "edges": edges,
+        "variableLinks": variable_links,
+        "variableProducers": variable_producers,
+        "variableConsumers": variable_consumers,
         "nodeCount": len(nodes_map),
     }

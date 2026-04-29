@@ -54,7 +54,7 @@
 | `name` | 几乎所有节点 | 节点名称，用于编辑器展示、调试和识别。 |
 | `nextNodeId` | 大部分顺序执行节点 | 当前节点完成后跳转到哪个节点。 |
 | `variableId` | `print`、`output` | 表示“读取哪个变量”。 |
-| `targetVariableId` | `get_sensor_info`、`db_query`、`analytics_summary`、`abstract_data_model` | 表示“把结果写入哪个变量”。 |
+| `targetVariableId` | `get_sensor_info`、`db_query`、`environment_model`、`analytics_summary`、`media_scene_model` | 表示“把结果写入哪个变量”。 |
 | `messageSource` | `print` | 决定打印的是固定文本还是变量值。 |
 | `loopConditionType` | `loop` | 决定循环按次数执行还是按表达式执行。 |
 | `branchCondition` | `branch` | 分支条件的占位结果，用来控制走真分支还是假分支。 |
@@ -276,13 +276,13 @@ analytics_summary -> text
 
 后者虽然能显示，但展示效果通常会比较“原始”。
 
-### 5.4 `abstract_data_model` 农业环境抽象模型
+### 5.4 `environment_model` 农业环境建模
 
 | 项目 | 说明 |
 | --- | --- |
-| 节点作用 | 基于历史传感器数据构建统一的农业环境抽象模型。 |
-| 核心配置 | `deviceId`、`hours`、`minPoints`、`targetVariableId` |
-| 默认行为 | 默认分析 168 小时数据，默认最少样本点为 24。 |
+| 节点作用 | 基于上游数据包或设备历史采样构建农业环境建模结果。 |
+| 核心配置 | `inputVariableId`、`deviceId`、`sampleLimit`、`method`、`targetVariableId` |
+| 默认行为 | 若未绑定上游变量，会读取默认设备最近 24 个采样点。 |
 
 这个节点可以理解为当前项目里最“高级”、最适合大屏专题展示的农业分析节点。
 
@@ -306,7 +306,7 @@ analytics_summary -> text
 最佳搭配通常是：
 
 ```text
-abstract_data_model
+environment_model
   -> 字符串变量
   -> output
   -> agri-model / agri-climate / agri-yield / agri-decision
@@ -467,13 +467,13 @@ abstract_data_model
 - 当前湿度是否正常
 - 光照是否异常
 
-### 7.5 `agri-model` 环境抽象模型
+### 7.5 `agri-model` 农业环境建模
 
 | 项目 | 说明 |
 | --- | --- |
-| 主要作用 | 展示环境抽象模型、主导维度、风险分数和摘要。 |
+| 主要作用 | 展示农业环境建模结果、主导维度、风险分数和摘要。 |
 | 数据来源 | 手动 JSON / 工作流端口 |
-| 最佳绑定 | `abstract_data_model` 输出 |
+| 最佳绑定 | `environment_model` 输出 |
 
 这是一个“模型概览组件”。
 
@@ -489,7 +489,7 @@ abstract_data_model
 | --- | --- |
 | 主要作用 | 展示未来气候趋势、微气候状态和关键环境预测。 |
 | 数据来源 | 手动 JSON / 工作流端口 |
-| 最佳绑定 | `abstract_data_model`、`forecast` 或 `climate` 类输出 |
+| 最佳绑定 | `environment_model` 或 `analytics_summary(forecast)` 输出 |
 
 它更偏“趋势与预测”视角，而不是静态总览视角。
 
@@ -499,7 +499,7 @@ abstract_data_model
 | --- | --- |
 | 主要作用 | 展示产量指数、亩产估算和影响因子评分。 |
 | 数据来源 | 手动 JSON / 工作流端口 |
-| 最佳绑定 | `abstract_data_model` 或产量预测类输出 |
+| 最佳绑定 | `environment_model` 或 `analytics_summary(yield)` 输出 |
 
 它适合展示：
 
@@ -513,7 +513,7 @@ abstract_data_model
 | --- | --- |
 | 主要作用 | 展示优先动作、原因说明和模块化建议列表。 |
 | 数据来源 | 手动 JSON / 工作流端口 |
-| 最佳绑定 | `abstract_data_model` 或 `decision` 类输出 |
+| 最佳绑定 | `environment_model` 或 `analytics_summary(decision)` 输出 |
 
 这个组件很适合放在大屏的“结论区”或“建议区”。
 
@@ -608,7 +608,7 @@ abstract_data_model
 | `get_sensor_info` | `agri-sensor`、`text`、图表组件 |
 | `db_query` | `text`、图表组件 |
 | `analytics_summary` | `agri-summary` |
-| `abstract_data_model` | `agri-model`、`agri-climate`、`agri-yield`、`agri-decision` |
+| `environment_model` | `agri-model`、`agri-climate`、`agri-yield`、`agri-decision`、`agri-scene3d` |
 | `output` | 所有需要绑定工作流数据的大屏组件 |
 
 ### 9.2 从“展示目标”角度看
@@ -618,10 +618,10 @@ abstract_data_model
 | 实时环境现状 | `get_sensor_info` | `agri-sensor`、`text` |
 | 历史变化趋势 | `db_query` 或可转成表格数据的节点 | `chart-line`、`chart-bar` |
 | 农业分析总述 | `analytics_summary` | `agri-summary` |
-| 模型总览 | `abstract_data_model` | `agri-model` |
-| 气候预测 | `abstract_data_model` | `agri-climate` |
-| 产量预测 | `abstract_data_model` | `agri-yield` |
-| 决策建议 | `abstract_data_model` 或 `analytics_summary(decision)` | `agri-decision`、`agri-summary` |
+| 模型总览 | `environment_model` | `agri-model` |
+| 气候预测 | `environment_model` 或 `analytics_summary(forecast)` | `agri-climate` |
+| 产量预测 | `environment_model` 或 `analytics_summary(yield)` | `agri-yield` |
+| 决策建议 | `environment_model` 或 `analytics_summary(decision)` | `agri-decision`、`agri-summary` |
 
 ## 10. 三种典型演示搭建思路
 
@@ -665,7 +665,7 @@ start
 
 ```text
 start
-  -> abstract_data_model
+  -> environment_model
   -> output
   -> agri-model / agri-climate / agri-yield / agri-decision
 ```
@@ -745,7 +745,7 @@ start
 | `get_sensor_info` | 去拿传感器数据。 |
 | `db_query` | 去数据库取结果。 |
 | `analytics_summary` | 把分析结果整理成摘要。 |
-| `abstract_data_model` | 生成统一的农业智能分析模型。 |
+| `environment_model` | 生成农业环境评分、风险、预测、产量和决策数据契约。 |
 | `output` | 把变量变成大屏可绑定端口。 |
 | `text` | 显示简单文字。 |
 | `image` | 显示图片。 |
@@ -768,8 +768,8 @@ start
 
 - `analytics_summary` 代表“把复杂分析结果整理成可读摘要”
 - `agri-summary` 代表“把摘要进一步变成更适合大屏阅读的内容”
-- `abstract_data_model` 代表“把农业分析结果结构化成统一模型”
-- `agri-model / climate / yield / decision` 代表“把统一模型拆成不同的专题卡片展示”
+- `environment_model` 代表“把农业环境数据建模成统一的大屏数据契约”
+- `agri-model / climate / yield / decision` 代表“把农业环境建模结果拆成不同的专题卡片展示”
 
 ## 14. 新增：`advanced_prediction` 高级预测与可视化节点
 

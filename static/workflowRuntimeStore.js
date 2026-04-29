@@ -15,6 +15,29 @@ function normalizePrimitiveValue(value) {
     if (typeof value === 'number' && Number.isFinite(value)) return value;
     if (typeof value === 'string') return value;
     if (value == null) return '';
+    if (Array.isArray(value) || typeof value === 'object') {
+        try {
+            return JSON.stringify(normalizeAnyValue(value));
+        } catch (error) {
+            return '';
+        }
+    }
+    return String(value);
+}
+
+function normalizeAnyValue(value) {
+    if (value == null) return null;
+    if (typeof value === 'number' || typeof value === 'string' || typeof value === 'boolean') return value;
+    if (Array.isArray(value)) return value.map(item => normalizeAnyValue(item));
+    if (typeof value === 'object') {
+        const next = {};
+        Object.entries(value).forEach(([key, item]) => {
+            const normalizedKey = String(key || '').trim();
+            if (!normalizedKey) return;
+            next[normalizedKey] = normalizeAnyValue(item);
+        });
+        return next;
+    }
     return String(value);
 }
 
@@ -31,13 +54,25 @@ function normalizeValueMap(values) {
     return normalized;
 }
 
+function normalizeStructuredMap(values) {
+    const normalized = {};
+    if (!values || typeof values !== 'object') return normalized;
+    Object.entries(values).forEach(([key, value]) => {
+        const normalizedKey = String(key || '').trim();
+        if (!normalizedKey) return;
+        normalized[normalizedKey] = normalizeAnyValue(value);
+    });
+    return normalized;
+}
+
 function normalizeRuntimeRecord(projectId, record) {
     if (!projectId || !record || typeof record !== 'object') return null;
     return {
         projectId: String(projectId),
         updatedAt: String(record.updatedAt || getNowIso()),
         portValuesById: normalizeValueMap(record.portValuesById),
-        portValuesByName: normalizeValueMap(record.portValuesByName)
+        portValuesByName: normalizeValueMap(record.portValuesByName),
+        nodeValuesById: normalizeStructuredMap(record.nodeValuesById)
     };
 }
 
@@ -72,14 +107,15 @@ export function getWorkflowRuntime(projectId) {
     return loadStore().records[String(projectId)] || null;
 }
 
-export function saveWorkflowRuntime(projectId, { portValuesById = {}, portValuesByName = {} } = {}) {
+export function saveWorkflowRuntime(projectId, { portValuesById = {}, portValuesByName = {}, nodeValuesById = {} } = {}) {
     if (!projectId) return null;
 
     const store = loadStore();
     const normalized = normalizeRuntimeRecord(projectId, {
         updatedAt: getNowIso(),
         portValuesById,
-        portValuesByName
+        portValuesByName,
+        nodeValuesById
     });
     if (!normalized) return null;
 

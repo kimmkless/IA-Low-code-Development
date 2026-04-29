@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import os
+import csv
+import io
 import json
 import math
 import urllib.error
 import urllib.parse
 import urllib.request
 from atexit import register
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -34,6 +37,7 @@ from environment_model import (
     build_data_packet,
     build_environment_analysis_summary,
     build_environment_model,
+    build_media_scene_model,
 )
 from workflow_static_check import detect_static_workflow, topological_order, validate_workflow_static
 
@@ -312,14 +316,85 @@ def resolve_variable_payload(variable_id: str | None, variable_values: dict[str,
         return value
 
 
+def snapshot_variable_refs(
+    node: dict[str, Any],
+    variable_values: dict[str, Any],
+    variable_defs_by_id: dict[str, dict[str, Any]],
+) -> dict[str, Any]:
+    props = node.get('properties', {}) or {}
+    refs: dict[str, Any] = {}
+    input_id = props.get('inputVariableId')
+    if input_id:
+        refs['inputVariableId'] = str(input_id)
+        refs['inputValue'] = resolve_variable_payload(input_id, variable_values, variable_defs_by_id)
+    variable_id = props.get('variableId')
+    if variable_id:
+        refs['variableId'] = str(variable_id)
+        refs['variableValue'] = resolve_variable_value(variable_id, variable_values, variable_defs_by_id)
+    return refs
+
+
+def build_node_trace(
+    *,
+    node: dict[str, Any],
+    status: str,
+    variable_refs: dict[str, Any],
+    output_value: Any = None,
+    output_contract: str = '',
+    target_variable_id: str | None = None,
+    target_variable_written: bool = False,
+    message: str = '',
+) -> dict[str, Any]:
+    props = node.get('properties', {}) or {}
+    return {
+        'nodeId': node.get('id'),
+        'nodeType': node.get('type'),
+        'nodeName': node_name(node),
+        'status': status,
+        'timestamp': datetime.now().isoformat(),
+        'input': variable_refs,
+        'output': output_value,
+        'contract': output_contract or '',
+        'targetVariableId': str(target_variable_id) if target_variable_id else '',
+        'targetVariableWritten': target_variable_written,
+        'nextNodeId': props.get('nextNodeId'),
+        'message': message,
+    }
+
+
 def to_csv_text(raw_value: Any) -> str:
+    def stringify_cell(value: Any) -> str:
+        if isinstance(value, (dict, list)):
+            return json.dumps(value, ensure_ascii=False)
+        return '' if value is None else str(value)
+
+    def write_rows(headers: list[str], rows: list[dict[str, Any]]) -> str:
+        buffer = io.StringIO()
+        writer = csv.DictWriter(buffer, fieldnames=headers, extrasaction='ignore', lineterminator='\n')
+        writer.writeheader()
+        for row in rows:
+            writer.writerow({key: stringify_cell(row.get(key)) for key in headers})
+        return buffer.getvalue().strip()
+
     if isinstance(raw_value, list) and raw_value and isinstance(raw_value[0], dict):
         headers = list(raw_value[0].keys())
-        rows = [','.join(str(row.get(key, '')) for key in headers) for row in raw_value]
-        return ','.join(headers) + ('\n' + '\n'.join(rows) if rows else '')
+        return write_rows(headers, raw_value)
     if isinstance(raw_value, dict):
+        records = raw_value.get('records')
+        if isinstance(records, list) and records and isinstance(records[0], dict):
+            headers: list[str] = []
+            seen = set()
+            for row in records:
+                for key in row.keys():
+                    if key not in seen:
+                        seen.add(key)
+                        headers.append(key)
+            return write_rows(headers, records)
+        latest = raw_value.get('latest')
+        if isinstance(latest, dict):
+            return write_rows(list(latest.keys()), [latest])
         headers = list(raw_value.keys())
-        return ','.join(headers) + ('\n' + ','.join(str(raw_value.get(key, '')) for key in headers) if headers else '')
+        return write_rows(headers, [raw_value]) if headers else ''
     return '' if raw_value is None else str(raw_value)
 
 
@@ -416,6 +491,32 @@ def run_analysis_task(analysis_type: str, device_id: str, hours: int, limit: int
         hours=max(1, hours),
         limit=max(1, limit),
     )
+
+
+def build_device_environment_model(
+    *,
+    device_id: str = 'SmartAgriculture_thermometer',
+    hours: int = 48,
+    min_points: int = 24,
+    method: str = 'weighted_index',
+) -> dict[str, Any]:
+    sample_limit = max(1, min(safe_int(min_points, 24), 240))
+    rows = sensor_db.get_latest_sensor_data(device_id or 'SmartAgriculture_thermometer', sample_limit)
+    packet = build_data_packet(
+        source_node_type='environment_model',
+        source_name='设备历史采样',
+        records=list(reversed(rows)),
+    )
+    model = build_environment_model(packet, method=method)
+    model.update({
+        'device_id': device_id,
+        'requestedHours': max(1, hours),
+        'requiredSampleCount': sample_limit,
+        'model_id': f"environment-model-{device_id}-{model.get('sampleCount', len(rows))}",
+        'model_name': '农业环境建模',
+        'sourceMode': 'device_history',
+    })
+    return model
 
 
 @app.route('/')
@@ -664,19 +765,39 @@ def get_generated_analytics_file(relative_path: str):
 @app.route('/api/agriculture/model', methods=['GET'])
 def get_agriculture_model():
     device_id, hours, min_points, _ = get_model_request_args()
-    model = sensor_db.build_abstract_data_model(device_id=device_id, hours=hours, min_points=min_points)
+    model = build_device_environment_model(device_id=device_id, hours=hours, min_points=min_points)
     return jsonify({'status': 'ok', 'data': model})
 
 
 @app.route('/api/agriculture/model/predict', methods=['GET'])
 def predict_agriculture_model():
     device_id, hours, min_points, target = get_model_request_args()
-    prediction = sensor_db.predict_from_abstract_data_model(
-        device_id=device_id,
-        hours=hours,
-        min_points=min_points,
-        target=target,
-    )
+    model = build_device_environment_model(device_id=device_id, hours=hours, min_points=min_points)
+    predictions = model.get('predictions') or {}
+    target_key = str(target or 'all').strip().lower()
+    if target_key in {'all', ''}:
+        prediction = {
+            'status': model.get('status', 'ok'),
+            'target': 'all',
+            'model_id': model.get('model_id'),
+            'predictions': predictions,
+        }
+    elif target_key in {'yield', 'yield_projection'}:
+        prediction = {
+            'status': model.get('status', 'ok'),
+            'target': 'yield',
+            'model_id': model.get('model_id'),
+            'prediction': predictions.get('yield_projection'),
+        }
+    elif target_key in {'climate', 'microclimate', 'weather', 'weather_tendency'}:
+        prediction = {
+            'status': model.get('status', 'ok'),
+            'target': 'microclimate',
+            'model_id': model.get('model_id'),
+            'prediction': predictions.get('microclimate_forecast'),
+        }
+    else:
+        return json_error(f'不支持的农业环境建模预测目标：{target}', 400, 'ENVIRONMENT_MODEL_TARGET_INVALID')
     return jsonify({'status': 'ok', 'data': prediction})
 
 
@@ -836,12 +957,12 @@ def execute_workflow():
     workflow_ports = data.get('workflow_ports', []) or []
 
     if not nodes_data:
-        return jsonify({'logs': ['错误：没有节点数据。'], 'outputs': {}, 'port_values': {}})
+        return jsonify({'logs': ['错误：没有节点数据。'], 'outputs': {}, 'port_values': {}, 'nodeValuesById': {}})
 
     nodes_map = {node['id']: node for node in nodes_data}
     start_node = next((node for node in nodes_data if node.get('type') == 'start'), None)
     if not start_node:
-        return jsonify({'logs': ['错误：未找到开始节点。'], 'outputs': {}, 'port_values': {}})
+        return jsonify({'logs': ['错误：未找到开始节点。'], 'outputs': {}, 'port_values': {}, 'nodeValuesById': {}})
 
     is_static_valid, static_messages = validate_workflow_static(nodes_data)
     if not is_static_valid:
@@ -852,18 +973,42 @@ def execute_workflow():
             'port_values': {},
             'portValuesById': {},
             'portValuesByName': {},
+            'nodeValuesById': {},
             'static_analysis': static_analysis,
             'static_errors': static_messages,
         }), 400
 
     variable_values, variable_defs_by_id = build_initial_variables(variable_defs)
     outputs: dict[str, Any] = {}
+    node_values_by_id: dict[str, Any] = {}
     logs: list[str] = []
     step_limit = 500
     topo_ids, topo_warnings = topological_order(nodes_data)
 
     def add_log(message: str) -> None:
         logs.append(message)
+
+    def record_node_trace(
+        node: dict[str, Any],
+        *,
+        status: str,
+        variable_refs: dict[str, Any],
+        output_value: Any = None,
+        output_contract: str = '',
+        target_variable_id: str | None = None,
+        target_variable_written: bool = False,
+        message: str = '',
+    ) -> None:
+        node_values_by_id[str(node.get('id'))] = build_node_trace(
+            node=node,
+            status=status,
+            variable_refs=variable_refs,
+            output_value=output_value,
+            output_contract=output_contract,
+            target_variable_id=target_variable_id,
+            target_variable_written=target_variable_written,
+            message=message,
+        )
 
     def exec_node(node_id: Any, depth: int = 0) -> None:
         nonlocal step_limit
@@ -883,13 +1028,16 @@ def execute_workflow():
         indent = '  ' * depth
         props = node.get('properties', {}) or {}
         node_type = node.get('type', 'unknown')
+        variable_refs = snapshot_variable_refs(node, variable_values, variable_defs_by_id)
         add_log(f"{indent}执行节点 [{node_type}] {node_name(node)}")
 
         if node_type == 'start':
+            record_node_trace(node, status='ok', variable_refs=variable_refs, message='start')
             exec_node(props.get('nextNodeId'), depth)
             return
 
         if node_type == 'sequence':
+            record_node_trace(node, status='ok', variable_refs=variable_refs, message='sequence')
             exec_node(props.get('nextNodeId'), depth)
             return
 
@@ -897,8 +1045,10 @@ def execute_workflow():
             if props.get('messageSource') == 'variable':
                 value = resolve_variable_value(props.get('variableId'), variable_values, variable_defs_by_id)
                 add_log(f"{indent}打印: {value}")
+                record_node_trace(node, status='ok', variable_refs=variable_refs, output_value=value, message='print-variable')
             else:
                 add_log(f"{indent}打印: {props.get('message', '')}")
+                record_node_trace(node, status='ok', variable_refs=variable_refs, output_value=props.get('message', ''), message='print-text')
             exec_node(props.get('nextNodeId'), depth)
             return
 
@@ -908,6 +1058,15 @@ def execute_workflow():
             outputs[str(node.get('id'))] = value
             variable_name = variable_defs_by_id.get(str(variable_id), {}).get('name', '未绑定变量')
             add_log(f"{indent}输出端口: {variable_name} = {value}")
+            record_node_trace(
+                node,
+                status='ok',
+                variable_refs=variable_refs,
+                output_value=value,
+                target_variable_id=str(variable_id) if variable_id else None,
+                target_variable_written=bool(variable_id),
+                message='output',
+            )
             exec_node(props.get('nextNodeId'), depth)
             return
 
@@ -934,6 +1093,16 @@ def execute_workflow():
                 add_log(f"{indent}写入变量成功: {converted if isinstance(converted, int) else 'JSON文本'}")
             else:
                 add_log(f"{indent}未写入变量：未绑定 targetVariableId")
+            record_node_trace(
+                node,
+                status='ok',
+                variable_refs=variable_refs,
+                output_value=payload,
+                output_contract=(payload.get('contract') if isinstance(payload, dict) else ''),
+                target_variable_id=str(props.get('targetVariableId')) if props.get('targetVariableId') else None,
+                target_variable_written=written,
+                message='get_sensor_info',
+            )
             exec_node(props.get('nextNodeId'), depth)
             return
 
@@ -953,12 +1122,34 @@ def execute_workflow():
                 add_log(f"{indent}写入变量成功: {converted if isinstance(converted, int) else 'JSON文本'}")
             else:
                 add_log(f"{indent}未写入变量：未绑定 targetVariableId")
+            record_node_trace(
+                node,
+                status='ok',
+                variable_refs=variable_refs,
+                output_value=payload,
+                output_contract=(payload.get('contract') if isinstance(payload, dict) else ''),
+                target_variable_id=str(props.get('targetVariableId')) if props.get('targetVariableId') else None,
+                target_variable_written=written,
+                message='db_query',
+            )
             exec_node(props.get('nextNodeId'), depth)
             return
 
         if node_type == 'environment_model':
-            input_payload = resolve_variable_payload(props.get('inputVariableId'), variable_values, variable_defs_by_id)
             method = str(props.get('method') or 'weighted_index').strip() or 'weighted_index'
+            input_variable_id = props.get('inputVariableId')
+            if input_variable_id:
+                input_payload = resolve_variable_payload(input_variable_id, variable_values, variable_defs_by_id)
+            else:
+                device_id = str(props.get('deviceId') or '').strip() or 'SmartAgriculture_thermometer'
+                sample_limit = max(1, min(safe_int(props.get('sampleLimit'), 24), 240))
+                rows = sensor_db.get_latest_sensor_data(device_id, sample_limit)
+                input_payload = build_data_packet(
+                    source_node_type='environment_model',
+                    source_name=node_name(node),
+                    records=list(reversed(rows)),
+                )
+                add_log(f"{indent}环境建模使用设备历史采样: device={device_id}, rows={len(rows)}")
             try:
                 payload = build_environment_model(input_payload, method=method)
                 add_log(
@@ -974,6 +1165,16 @@ def execute_workflow():
                 add_log(f"{indent}写入变量成功: {converted if isinstance(converted, int) else 'JSON文本'}")
             else:
                 add_log(f"{indent}未写入变量：未绑定 targetVariableId")
+            record_node_trace(
+                node,
+                status='ok' if payload.get('status') != 'error' else 'error',
+                variable_refs=variable_refs,
+                output_value=payload,
+                output_contract=(payload.get('contract') if isinstance(payload, dict) else ''),
+                target_variable_id=str(props.get('targetVariableId')) if props.get('targetVariableId') else None,
+                target_variable_written=written,
+                message='environment_model',
+            )
             exec_node(props.get('nextNodeId'), depth)
             return
 
@@ -1003,6 +1204,16 @@ def execute_workflow():
                 add_log(f"{indent}写入变量成功: {converted if isinstance(converted, int) else 'JSON文本'}")
             else:
                 add_log(f"{indent}未写入变量：未绑定 targetVariableId")
+            record_node_trace(
+                node,
+                status='ok',
+                variable_refs=variable_refs,
+                output_value=payload,
+                output_contract=(payload.get('contract') if isinstance(payload, dict) else ''),
+                target_variable_id=str(props.get('targetVariableId')) if props.get('targetVariableId') else None,
+                target_variable_written=written,
+                message='analytics_summary',
+            )
             exec_node(props.get('nextNodeId'), depth)
             return
 
@@ -1012,23 +1223,34 @@ def execute_workflow():
             min_points = max(12, min(safe_int(props.get('minPoints'), 24), 240))
             payload: Any = {}
             try:
-                payload = sensor_db.build_abstract_data_model(
+                payload = build_device_environment_model(
                     device_id=device_id,
                     hours=hours,
                     min_points=min_points,
                 )
-                status = payload.get('status', 'unknown') if isinstance(payload, dict) else 'unknown'
-                model_name = payload.get('model_name', '未知模型') if isinstance(payload, dict) else '未知模型'
-                add_log(f"{indent}抽象数据模型构建完成: status={status}, model={model_name}")
+                add_log(
+                    f"{indent}旧版模型节点已由农业环境建模代替执行: "
+                    f"score={payload.get('environmentScore')}, level={payload.get('environmentLevel')}"
+                )
             except Exception as exc:
                 payload = {'status': 'error', 'message': str(exc)}
-                add_log(f"{indent}抽象数据模型构建失败: {exc}")
+                add_log(f"{indent}农业环境建模代替执行失败: {exc}")
 
             written, converted = assign_variable_value(props.get('targetVariableId'), payload, variable_values, variable_defs_by_id)
             if written:
                 add_log(f"{indent}写入变量成功: {converted if isinstance(converted, int) else 'JSON文本'}")
             else:
                 add_log(f"{indent}未写入变量：未绑定 targetVariableId")
+            record_node_trace(
+                node,
+                status='ok' if payload.get('status') != 'error' else 'error',
+                variable_refs=variable_refs,
+                output_value=payload,
+                output_contract=(payload.get('contract') if isinstance(payload, dict) else ''),
+                target_variable_id=str(props.get('targetVariableId')) if props.get('targetVariableId') else None,
+                target_variable_written=written,
+                message='environment_model_legacy',
+            )
             exec_node(props.get('nextNodeId'), depth)
             return
 
@@ -1052,6 +1274,89 @@ def execute_workflow():
                 add_log(f"{indent}鍐欏叆鍙橀噺鎴愬姛: {('图片地址' if output_kind.endswith('_url') else ('CSV文本' if output_kind.endswith('_csv') else 'JSON文本'))}")
             else:
                 add_log(f"{indent}鏈啓鍏ュ彉閲忥細鏈粦瀹?targetVariableId")
+            record_node_trace(
+                node,
+                status='ok' if not (isinstance(payload, dict) and payload.get('status') == 'error') else 'error',
+                variable_refs=variable_refs,
+                output_value=payload,
+                target_variable_id=str(props.get('targetVariableId')) if props.get('targetVariableId') else None,
+                target_variable_written=written,
+                message='advanced_prediction',
+            )
+            exec_node(props.get('nextNodeId'), depth)
+            return
+
+        if node_type == 'media_scene_model':
+            media_data_url = str(props.get('mediaDataUrl') or '').strip()
+            media_url = str(props.get('mediaUrl') or '').strip()
+            media_source = media_data_url or media_url
+            media_type = str(props.get('mediaType') or '').strip()
+            file_name = str(props.get('mediaFileName') or '').strip()
+            active_layer = str(props.get('activeLayer') or 'soil_moisture').strip() or 'soil_moisture'
+            analysis_payload = resolve_variable_payload(props.get('inputVariableId'), variable_values, variable_defs_by_id)
+            visualization_options = {
+                'defaultLayer': active_layer,
+                'layerVisibility': {
+                    'soil_moisture': bool(props.get('showSoilLayer', True)),
+                    'rainfall': bool(props.get('showRainfallLayer', True)),
+                    'rain_forecast': bool(props.get('showForecastLayer', True)),
+                    'elevation': bool(props.get('showElevationLayer', True)),
+                },
+                'thresholds': {
+                    'soil': {
+                        'dry': safe_int(props.get('soilDryThreshold'), 35),
+                        'wet': safe_int(props.get('soilWetThreshold'), 62),
+                    },
+                    'rain': {
+                        'light': safe_int(props.get('rainLightThreshold'), 1),
+                        'heavy': safe_int(props.get('rainHeavyThreshold'), 5),
+                    },
+                },
+                'colorScheme': str(props.get('colorScheme') or 'default').strip() or 'default',
+            }
+            try:
+                if media_data_url and media_url:
+                    add_log(f"{indent}媒体源冲突：同时存在 mediaDataUrl 与 mediaUrl，优先使用导入文件。")
+                if media_data_url and not media_data_url.startswith('data:'):
+                    raise ValueError('mediaDataUrl 格式无效，必须是 data URL。')
+                if media_data_url:
+                    mime_part = media_data_url.split(';', 1)[0]
+                    if not (mime_part.startswith('data:image/') or mime_part.startswith('data:video/')):
+                        raise ValueError('导入媒体类型不受支持，仅允许 image/* 或 video/*。')
+                    if len(media_data_url.encode('utf-8')) > 12 * 1024 * 1024:
+                        raise ValueError('导入媒体过大，请改用媒体 URL 或压缩后再导入。')
+                payload = build_media_scene_model(
+                    media_source,
+                    analysis_payload,
+                    media_type=media_type,
+                    file_name=file_name,
+                    active_layer=active_layer,
+                    visualization_options=visualization_options,
+                )
+                grid = (payload.get('model') or {}).get('grid') or {}
+                add_log(
+                    f"{indent}3D场景建模完成: media={payload.get('media', {}).get('kind')}, "
+                    f"grid={grid.get('columns')}x{grid.get('rows')}, layer={payload.get('activeLayer')}"
+                )
+            except Exception as exc:
+                payload = {'status': 'error', 'message': str(exc)}
+                add_log(f"{indent}3D场景建模失败: {exc}")
+
+            written, converted = assign_variable_value(props.get('targetVariableId'), payload, variable_values, variable_defs_by_id)
+            if written:
+                add_log(f"{indent}写入变量成功: {converted if isinstance(converted, int) else 'JSON文本'}")
+            else:
+                add_log(f"{indent}未写入变量：未绑定 targetVariableId")
+            record_node_trace(
+                node,
+                status='ok' if payload.get('status') != 'error' else 'error',
+                variable_refs=variable_refs,
+                output_value=payload,
+                output_contract=(payload.get('contract') if isinstance(payload, dict) else ''),
+                target_variable_id=str(props.get('targetVariableId')) if props.get('targetVariableId') else None,
+                target_variable_written=written,
+                message='media_scene_model',
+            )
             exec_node(props.get('nextNodeId'), depth)
             return
 
@@ -1075,6 +1380,7 @@ def execute_workflow():
                 else:
                     add_log(f"{indent}  循环体为空")
             add_log(f"{indent}循环结束")
+            record_node_trace(node, status='ok', variable_refs=variable_refs, message='loop')
             exec_node(next_id, depth)
             return
 
@@ -1099,10 +1405,12 @@ def execute_workflow():
                     exec_node(false_branch, depth + 1)
             else:
                 add_log(f"{indent}没有有效的分支节点")
+            record_node_trace(node, status='ok', variable_refs=variable_refs, output_value=condition, message='branch')
             exec_node(props.get('nextNodeId'), depth)
             return
 
         add_log(f"{indent}警告：未知节点类型 {node_type}")
+        record_node_trace(node, status='warn', variable_refs=variable_refs, message=f'unknown:{node_type}')
 
     add_log('========== 开始执行工作流 ==========')
     if topo_ids:
@@ -1140,6 +1448,7 @@ def execute_workflow():
         'port_values': port_values,
         'portValuesById': port_values_by_id,
         'portValuesByName': port_values_by_name,
+        'nodeValuesById': node_values_by_id,
         'static_analysis': static_analysis,
     })
 

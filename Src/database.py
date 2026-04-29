@@ -14,6 +14,8 @@ from pathlib import Path
 import threading
 from collections import defaultdict
 
+from environment_model import build_data_packet, build_environment_model
+
 logger = logging.getLogger(__name__)
 
 
@@ -1595,8 +1597,22 @@ class SensorDatabase:
             return self.get_agriculture_yield_prediction(device_id=device_id, hours=max(72, hours))
         if analysis in {"decision", "decision_engine"}:
             return self.get_agriculture_decision_engine(device_id=device_id, hours=hours)
-        if analysis in {"model", "abstract_model"}:
-            return self.build_abstract_data_model(device_id=device_id, hours=max(24, hours), min_points=max(12, min(limit * 3, 96)))
+        if analysis in {"model", "environment_model", "abstract_model"}:
+            sample_limit = max(12, min(limit * 3, 96))
+            rows = self.get_latest_sensor_data(device_id=device_id, limit=sample_limit)
+            packet = build_data_packet(
+                source_node_type="environment_model",
+                source_name="analysis_task",
+                records=list(reversed(rows)),
+            )
+            model = build_environment_model(packet)
+            model.update({
+                "device_id": device_id,
+                "model_id": f"environment-model-{device_id}-{model.get('sampleCount', len(rows))}",
+                "model_name": "农业环境建模",
+                "sourceMode": "analysis_task",
+            })
+            return model
         raise ValueError(f"Unsupported analysis type: {analysis_type}")
 
     def _hash_password(self, password: str, salt_hex: str) -> str:

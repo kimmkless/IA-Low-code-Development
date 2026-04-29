@@ -2,7 +2,9 @@ const STORAGE_KEY = 'ia.lowcode.projects.v1';
 const MAX_RECENT_PROJECTS = 24;
 const DEMO_WORKFLOW_PROJECT_ID = 'workflow-demo-smart-agriculture';
 const DEMO_SCREEN_PROJECT_ID = 'screen-demo-smart-agriculture';
-const DEMO_VERSION = 4;
+const DEMO_VERSION = 13;
+const DEMO_SCREEN_WIDTH = 3840;
+const DEMO_SCREEN_HEIGHT = 2160;
 
 export const DEMO_PROJECT_IDS = Object.freeze({
     workflow: DEMO_WORKFLOW_PROJECT_ID,
@@ -85,7 +87,7 @@ function createProjectId(type) {
 function buildLegacyDemoNarrativeText() {
     return [
         '本演示将“数据采集、分析建模、低代码编排、大屏展示”四条主线串成一套完整闭环。',
-        '工作流部分覆盖开始、打印、顺序、循环、分支、传感器读取、SQL 查询、分析摘要、抽象模型、输出端口等全部核心节点。',
+        '工作流部分覆盖开始、打印、顺序、循环、分支、传感器读取、SQL 查询、农业环境建模、分析摘要、3D 建模和输出端口等核心节点。',
         '大屏部分同时展示文本、现场抓拍、柱状图、折线图、饼图、传感器卡、模型卡、气候卡、产量卡、决策卡与天气卡。',
         '即使没有真实设备在线，系统也能自动回退到内置演示数据，保证评审、答辩和汇报现场稳定演示。'
     ].join('\n');
@@ -133,11 +135,12 @@ function buildDemoModelDefaultValue() {
     return JSON.stringify({
         status: 'ok',
         model_id: 'demo-agri-twin-default',
-        model_name: '智慧农业抽象数据模型',
+        contract: 'ia.workflow.environment_model.v1',
+        model_name: '农业环境建模',
         screen_contract: {
             overview: {
-                title: '智慧农业抽象数据模型',
-                summary: '默认模型样例已就绪。运行工作流后，这里会切换为基于实时与历史传感器数据生成的农业环境抽象模型。',
+                title: '农业环境建模',
+                summary: '默认模型样例已就绪。运行工作流后，这里会切换为基于实时与历史传感器数据生成的农业环境建模结果。',
                 sample_count: 192,
                 updated_at: '2026-04-19 09:30:00',
                 climate_archetype: '稳定适生型',
@@ -267,7 +270,7 @@ function buildLegacyDemoWorkflowProject() {
                     properties: {
                         name: '演示开场说明',
                         messageSource: 'manual',
-                        message: '系统演示开始：将依次执行数据读取、SQL 查询、分析摘要、抽象建模与端口输出。',
+                        message: '系统演示开始：将依次执行数据读取、SQL 查询、分析摘要、农业环境建模与端口输出。',
                         variableId: null,
                         nextNodeId: 102,
                         portPositions: {},
@@ -451,17 +454,18 @@ function buildLegacyDemoWorkflowProject() {
                 },
                 {
                     id: 111,
-                    type: 'abstract_data_model',
+                    type: 'environment_model',
                     x: 2980,
                     y: 120,
                     parentId: null,
                     localX: 0,
                     localY: 0,
                     properties: {
-                        name: '构建农业环境抽象模型',
+                        name: '农业环境建模',
+                        inputVariableId: variableLatestCsvId,
                         deviceId: 'SmartAgriculture_thermometer',
-                        hours: 168,
-                        minPoints: 24,
+                        sampleLimit: 24,
+                        method: 'weighted_index',
                         targetVariableId: variableModelId,
                         nextNodeId: 112,
                         portPositions: {},
@@ -713,7 +717,7 @@ function buildLegacyDemoWorkflowProject() {
                 },
                 {
                     id: variableModelId,
-                    name: '农业环境抽象模型JSON',
+                    name: '农业环境建模 JSON',
                     dataType: 'string',
                     defaultValue: buildDemoModelDefaultValue()
                 }
@@ -721,7 +725,7 @@ function buildLegacyDemoWorkflowProject() {
             workflow_ports: [
                 {
                     id: 'demo-port-model',
-                    name: 'agriTwinModel',
+                    name: 'environmentModelJson',
                     dataType: 'string',
                     nodeId: 112,
                     field: 'outputValue'
@@ -782,7 +786,7 @@ function buildLegacyDemoScreenProject() {
             demoVersion: DEMO_VERSION,
             page: {
                 width: 1600,
-                height: 1400,
+                height: 1520,
                 background: 'radial-gradient(circle at 18% 18%, rgba(59, 130, 246, 0.18), transparent 24%), radial-gradient(circle at 82% 12%, rgba(16, 185, 129, 0.20), transparent 26%), linear-gradient(145deg, #09131c 0%, #102436 42%, #153b34 100%)'
             },
             components: [
@@ -811,7 +815,7 @@ function buildLegacyDemoScreenProject() {
                     width: 930,
                     height: 132,
                     props: {
-                        text: '本页面联动展示项目亮点、数据采集、历史趋势、风险分布、农业环境抽象模型、气候预测、产量预测、辅助决策与天气模块。工作流运行后，图表和模型会同步刷新；未运行时也会使用演示默认值稳定展示。',
+                        text: '本页面联动展示项目亮点、数据采集、历史趋势、风险分布、农业环境建模、气候预测、产量预测、辅助决策与天气模块。工作流运行后，图表和模型会同步刷新；未运行时也会使用演示默认值稳定展示。',
                         fontSize: 20,
                         color: '#cbd5e1',
                         fontWeight: '600',
@@ -1027,7 +1031,7 @@ function buildLegacyDemoScreenProject() {
                     width: 488,
                     height: 320,
                     props: {
-                        title: '农业环境抽象模型',
+                        title: '农业环境建模',
                         jsonText: '{"status":"waiting"}',
                         source: {
                             mode: 'workflow-port',
@@ -1042,7 +1046,7 @@ function buildLegacyDemoScreenProject() {
                     x: 56,
                     y: 1110,
                     width: 480,
-                    height: 260,
+                    height: 360,
                     props: {
                         title: '气候趋势预测',
                         jsonText: '{"status":"waiting"}',
@@ -1059,7 +1063,7 @@ function buildLegacyDemoScreenProject() {
                     x: 556,
                     y: 1110,
                     width: 420,
-                    height: 260,
+                    height: 360,
                     props: {
                         title: '产量预测',
                         jsonText: '{"status":"waiting"}',
@@ -1076,7 +1080,7 @@ function buildLegacyDemoScreenProject() {
                     x: 996,
                     y: 1110,
                     width: 548,
-                    height: 260,
+                    height: 360,
                     props: {
                         title: '辅助决策',
                         jsonText: '{"status":"waiting"}',
@@ -1096,8 +1100,8 @@ function buildLegacyDemoScreenProject() {
 function buildDemoNarrativeText() {
     return [
         '演示工程把数据采集、分析建模、低代码编排、项目端口联动与大屏展示串成一条完整闭环。',
-        '工作流会依次经过传感器读取、SQL 查询、总览分析、趋势分析、风险告警、策略建议、气候预测、产量预测、辅助决策、报告摘要与环境抽象建模。',
-        '大屏同步展示文本、图片、柱状图、折线图、饼图、天气卡、传感器卡、分析摘要卡、模型卡、气候卡、产量卡和决策卡，完整体现组件库与农业特色。',
+        '工作流会依次经过传感器读取、农业环境建模、SQL 查询、总览分析、风险告警、策略建议、气候预测、产量预测、辅助决策、报告摘要与影像三维场景建模。',
+        '大屏同步展示文本、图片、柱状图、折线图、饼图、天气卡、传感器卡、分析摘要卡、农业环境建模卡、气候卡、产量卡、决策卡和 3D 场景，完整体现组件库与农业特色。',
         '即使现场没有真实设备在线，系统也会自动使用默认 demo 数据兜底，保证答辩、汇报和联调过程稳定可演示。'
     ].join('\n');
 }
@@ -1287,6 +1291,96 @@ function buildDemoDecisionSummaryPayload() {
     };
 }
 
+function buildDemoScene3dPayload() {
+    const columns = 7;
+    const rows = 5;
+    const terrain = [];
+    for (let z = 0; z < rows; z += 1) {
+        for (let x = 0; x < columns; x += 1) {
+            const elevation = Number((8 + Math.abs(x - 3) * 1.7 + Math.abs(z - 2) * 1.1 + ((x + z) % 3)).toFixed(2));
+            const soil = Number(Math.max(24, Math.min(76, 48 + (2 - z) * 3.4 + (x - 3) * 1.6)).toFixed(2));
+            const rainfall = Number(Math.max(0.2, 1.1 + z * 0.34 + (x % 3) * 0.2).toFixed(2));
+            const rainForecast = Number(Math.max(0.3, rainfall * 1.24 + (6 - x) * 0.13).toFixed(2));
+            terrain.push({
+                x,
+                z,
+                elevation,
+                soil_moisture: soil,
+                rainfall,
+                rain_forecast: rainForecast,
+                colors: {
+                    soil_moisture: soil < 35 ? '#b45309' : soil < 50 ? '#f59e0b' : soil < 64 ? '#22c55e' : '#0ea5e9',
+                    rainfall: rainfall < 1 ? '#e0f2fe' : rainfall < 2.2 ? '#7dd3fc' : rainfall < 5 ? '#0284c7' : '#1e3a8a',
+                    rain_forecast: rainForecast < 1 ? '#f8fafc' : rainForecast < 3 ? '#a7f3d0' : rainForecast < 5 ? '#10b981' : '#047857',
+                    elevation: elevation < 10 ? '#bbf7d0' : elevation < 15 ? '#86efac' : elevation < 20 ? '#fde68a' : '#a16207'
+                }
+            });
+        }
+    }
+
+    return JSON.stringify({
+        status: 'ok',
+        contract: 'ia.workflow.media_scene3d.v1',
+        generatedAt: '2026-04-19T09:30:00',
+        media: {
+            kind: 'image',
+            fileName: 'demo-greenhouse.jpg',
+            embedded: false
+        },
+        analysisBinding: {
+            environmentScore: 76.4,
+            environmentLevel: '良好',
+            riskType: '轻度干旱风险'
+        },
+        model: {
+            type: 'procedural_agri_scene',
+            grid: { columns, rows },
+            dimensions: { width: columns * 12, depth: rows * 12, height: 28, unit: 'm' },
+            camera: { projection: 'isometric', azimuth: 42, elevation: 34, zoom: 1 },
+            terrain,
+            objects: [
+                { kind: 'sensor_tower', x: 1, z: 1, height: 24 },
+                { kind: 'irrigation_line', x: 3, z: 0, length: 5 },
+                { kind: 'rain_gauge', x: 5, z: 3, height: 16 }
+            ]
+        },
+        layers: [
+            { key: 'soil_moisture', label: '土壤湿度', unit: '%', min: 0, max: 100 },
+            { key: 'rainfall', label: '降雨状况', unit: 'mm', min: 0, max: 8 },
+            { key: 'rain_forecast', label: '降雨预测', unit: 'mm', min: 0, max: 8 },
+            { key: 'elevation', label: '地形高程', unit: 'm', min: 0, max: 24 }
+        ],
+        visibleLayers: ['soil_moisture', 'rainfall', 'rain_forecast', 'elevation'],
+        activeLayer: 'soil_moisture',
+        layerStats: {
+            soil_moisture: { min: 34.4, max: 61.4, avg: 47.9 },
+            rainfall: { min: 1.1, max: 2.86, avg: 1.96 },
+            rain_forecast: { min: 1.36, max: 3.23, avg: 2.41 },
+            elevation: { min: 8, max: 15.3, avg: 11.8 }
+        },
+        hotspots: [
+            { x: 0, z: 4, type: 'dry_soil', label: '偏干地块', metric: 'soil_moisture', value: 34.4, priority: 'P1' }
+        ],
+        screen_contract: {
+            title: '影像三维环境场景',
+            summary: '基于导入影像构建三维地块，并叠加湿度、降雨、预测图层。',
+            defaultLayer: 'soil_moisture',
+            layerStats: {
+                soil_moisture: { min: 34.4, max: 61.4, avg: 47.9 },
+                rainfall: { min: 1.1, max: 2.86, avg: 1.96 },
+                rain_forecast: { min: 1.36, max: 3.23, avg: 2.41 },
+                elevation: { min: 8, max: 15.3, avg: 11.8 }
+            }
+        },
+        payload: {},
+        meta: {
+            source: 'media_scene_model',
+            mediaInputMode: 'url',
+            colorScheme: 'default'
+        }
+    }, null, 2);
+}
+
 function buildDemoReportSummaryPayload() {
     return {
         summary: '平台将环境感知、低代码编排、农业分析、模型建构与大屏展示串成完整业务闭环，适合答辩演示与后续项目扩展。',
@@ -1328,7 +1422,8 @@ function buildDemoWorkflowProject() {
     const variableYieldJsonId = 'demo-variable-yield-json';
     const variableDecisionJsonId = 'demo-variable-decision-json';
     const variableReportJsonId = 'demo-variable-report-json';
-    const variableModelId = 'demo-variable-model';
+    const variableEnvModelId = 'demo-variable-env-model';
+    const variableSceneModelId = 'demo-variable-scene-model';
 
     const createOutputNode = (id, x, y, name, variableId, nextNodeId = null) => ({
         id,
@@ -1353,7 +1448,8 @@ function buildDemoWorkflowProject() {
         name: '智慧农业演示工程-工作流',
         data: {
             demoVersion: DEMO_VERSION,
-            nodes: [
+            nodes: (() => {
+                const nodes = [
                 {
                     id: 100,
                     type: 'start',
@@ -1462,6 +1558,26 @@ function buildDemoWorkflowProject() {
                         deviceId: 'SmartAgriculture_thermometer',
                         limit: 1,
                         targetVariableId: variableLatestCsvId,
+                        nextNodeId: 154,
+                        portPositions: {},
+                        breakpoint: false
+                    }
+                },
+                {
+                    id: 154,
+                    type: 'environment_model',
+                    x: 1750,
+                    y: 120,
+                    parentId: null,
+                    localX: 0,
+                    localY: 0,
+                    properties: {
+                        name: '环境建模基线',
+                        method: 'weighted_index',
+                        inputVariableId: variableLatestCsvId,
+                        deviceId: 'SmartAgriculture_thermometer',
+                        sampleLimit: 24,
+                        targetVariableId: variableEnvModelId,
                         nextNodeId: 106,
                         portPositions: {},
                         breakpoint: false
@@ -1470,7 +1586,7 @@ function buildDemoWorkflowProject() {
                 {
                     id: 106,
                     type: 'db_query',
-                    x: 1750,
+                    x: 2000,
                     y: 120,
                     parentId: null,
                     localX: 0,
@@ -1505,18 +1621,30 @@ END`,
                 },
                 {
                     id: 107,
-                    type: 'analytics_summary',
-                    x: 2000,
+                    type: 'db_query',
+                    x: 2250,
                     y: 120,
                     parentId: null,
                     localX: 0,
                     localY: 0,
                     properties: {
-                        name: '趋势时序分析',
-                        analysisType: 'timeline',
-                        deviceId: 'SmartAgriculture_thermometer',
-                        hours: 48,
-                        limit: 12,
+                        name: '趋势时序查询',
+                        sql: `SELECT bucket, temperature, humidity, soil_humidity, pm25, light_lux
+FROM (
+    SELECT
+        substr(timestamp, 1, 16) AS bucket,
+        ROUND(AVG(temperature), 2) AS temperature,
+        ROUND(AVG(humidity), 2) AS humidity,
+        ROUND(AVG(soil_humidity), 2) AS soil_humidity,
+        ROUND(AVG(pm25), 2) AS pm25,
+        ROUND(AVG(light_lux), 2) AS light_lux
+    FROM sensor_data
+    WHERE device_id = 'SmartAgriculture_thermometer'
+    GROUP BY substr(timestamp, 1, 16)
+    ORDER BY bucket DESC
+    LIMIT 12
+) t
+ORDER BY bucket ASC`,
                         targetVariableId: variableTrendCsvId,
                         nextNodeId: 108,
                         portPositions: {},
@@ -1526,7 +1654,7 @@ END`,
                 {
                     id: 108,
                     type: 'analytics_summary',
-                    x: 2250,
+                    x: 2500,
                     y: 120,
                     parentId: null,
                     localX: 0,
@@ -1537,6 +1665,7 @@ END`,
                         deviceId: 'SmartAgriculture_thermometer',
                         hours: 48,
                         limit: 8,
+                        inputVariableId: variableEnvModelId,
                         targetVariableId: variableOverviewJsonId,
                         nextNodeId: 109,
                         portPositions: {},
@@ -1546,7 +1675,7 @@ END`,
                 {
                     id: 109,
                     type: 'analytics_summary',
-                    x: 2500,
+                    x: 2750,
                     y: 120,
                     parentId: null,
                     localX: 0,
@@ -1557,6 +1686,7 @@ END`,
                         deviceId: 'SmartAgriculture_thermometer',
                         hours: 48,
                         limit: 8,
+                        inputVariableId: variableEnvModelId,
                         targetVariableId: variableAlertsJsonId,
                         nextNodeId: 110,
                         portPositions: {},
@@ -1566,7 +1696,7 @@ END`,
                 {
                     id: 110,
                     type: 'analytics_summary',
-                    x: 2750,
+                    x: 3000,
                     y: 120,
                     parentId: null,
                     localX: 0,
@@ -1577,6 +1707,7 @@ END`,
                         deviceId: 'SmartAgriculture_thermometer',
                         hours: 48,
                         limit: 8,
+                        inputVariableId: variableEnvModelId,
                         targetVariableId: variableRecommendationsJsonId,
                         nextNodeId: 111,
                         portPositions: {},
@@ -1586,7 +1717,7 @@ END`,
                 {
                     id: 111,
                     type: 'analytics_summary',
-                    x: 3000,
+                    x: 3250,
                     y: 120,
                     parentId: null,
                     localX: 0,
@@ -1597,6 +1728,7 @@ END`,
                         deviceId: 'SmartAgriculture_thermometer',
                         hours: 48,
                         limit: 8,
+                        inputVariableId: variableEnvModelId,
                         targetVariableId: variableForecastJsonId,
                         nextNodeId: 112,
                         portPositions: {},
@@ -1606,7 +1738,7 @@ END`,
                 {
                     id: 112,
                     type: 'analytics_summary',
-                    x: 3250,
+                    x: 3500,
                     y: 120,
                     parentId: null,
                     localX: 0,
@@ -1617,6 +1749,7 @@ END`,
                         deviceId: 'SmartAgriculture_thermometer',
                         hours: 72,
                         limit: 8,
+                        inputVariableId: variableEnvModelId,
                         targetVariableId: variableYieldJsonId,
                         nextNodeId: 113,
                         portPositions: {},
@@ -1626,7 +1759,7 @@ END`,
                 {
                     id: 113,
                     type: 'analytics_summary',
-                    x: 3500,
+                    x: 3750,
                     y: 120,
                     parentId: null,
                     localX: 0,
@@ -1637,6 +1770,7 @@ END`,
                         deviceId: 'SmartAgriculture_thermometer',
                         hours: 48,
                         limit: 8,
+                        inputVariableId: variableEnvModelId,
                         targetVariableId: variableDecisionJsonId,
                         nextNodeId: 114,
                         portPositions: {},
@@ -1646,7 +1780,7 @@ END`,
                 {
                     id: 114,
                     type: 'analytics_summary',
-                    x: 3750,
+                    x: 4000,
                     y: 120,
                     parentId: null,
                     localX: 0,
@@ -1657,6 +1791,7 @@ END`,
                         deviceId: 'SmartAgriculture_thermometer',
                         hours: 48,
                         limit: 8,
+                        inputVariableId: variableEnvModelId,
                         targetVariableId: variableReportJsonId,
                         nextNodeId: 115,
                         portPositions: {},
@@ -1683,24 +1818,55 @@ END`,
                 },
                 {
                     id: 116,
-                    type: 'abstract_data_model',
-                    x: 4250,
+                    type: 'print',
+                    x: 3300,
+                    y: 760,
+                    parentId: null,
+                    localX: 0,
+                    localY: 0,
+                    properties: {
+                        name: '打印环境建模结果',
+                        messageSource: 'variable',
+                        message: '',
+                        variableId: variableEnvModelId,
+                        nextNodeId: 131,
+                        portPositions: {},
+                        breakpoint: false
+                    }
+                },
+                {
+                    id: 131,
+                    type: 'media_scene_model',
+                    x: 4480,
                     y: 120,
                     parentId: null,
                     localX: 0,
                     localY: 0,
                     properties: {
-                        name: '构建农业环境抽象模型',
-                        deviceId: 'SmartAgriculture_thermometer',
-                        hours: 168,
-                        minPoints: 24,
-                        targetVariableId: variableModelId,
-                        nextNodeId: 117,
+                        name: '影像三维场景建模',
+                        mediaUrl: '/api/agriculture/camera/snapshot',
+                        mediaDataUrl: '',
+                        mediaFileName: 'demo-camera-snapshot.jpg',
+                        mediaType: 'image',
+                        inputVariableId: variableEnvModelId,
+                        activeLayer: 'soil_moisture',
+                        colorScheme: 'default',
+                        soilDryThreshold: 35,
+                        soilWetThreshold: 62,
+                        rainLightThreshold: 1,
+                        rainHeavyThreshold: 5,
+                        showSoilLayer: true,
+                        showRainfallLayer: true,
+                        showForecastLayer: true,
+                        showElevationLayer: true,
+                        targetVariableId: variableSceneModelId,
+                        nextNodeId: 132,
                         portPositions: {},
                         breakpoint: false
                     }
                 },
-                createOutputNode(117, 4250, 320, '输出农业模型', variableModelId, 118),
+                createOutputNode(132, 4020, 320, '输出三维场景模型', variableSceneModelId, 117),
+                createOutputNode(117, 760, 1010, '输出环境建模结果', variableEnvModelId, 118),
                 createOutputNode(118, 4480, 320, '输出项目亮点文案', variableStoryId, 119),
                 createOutputNode(119, 4710, 320, '输出核心能力数量', variableFeatureCountId, 120),
                 createOutputNode(120, 4940, 320, '输出现场抓拍地址', variableImageId, 121),
@@ -1788,8 +1954,51 @@ END`,
                         branchSide: 'false'
                     }
                 }
-            ],
-            next_id: 8000,
+
+                ];
+                const layoutOverrides = {
+                    100: { x: 80, y: 80 },
+                    101: { x: 360, y: 80 },
+                    102: { x: 660, y: 80 },
+                    103: { x: 980, y: 40 },
+                    104: { x: 1360, y: 40 },
+                    105: { x: 80, y: 360 },
+                    154: { x: 420, y: 360 },
+                    106: { x: 760, y: 360 },
+                    107: { x: 1100, y: 360 },
+                    108: { x: 80, y: 660 },
+                    109: { x: 420, y: 660 },
+                    110: { x: 760, y: 660 },
+                    111: { x: 1100, y: 660 },
+                    112: { x: 1440, y: 660 },
+                    113: { x: 1780, y: 660 },
+                    114: { x: 2120, y: 660 },
+                    115: { x: 2500, y: 660 },
+                    116: { x: 2880, y: 660 },
+                    131: { x: 80, y: 1010 },
+                    132: { x: 420, y: 1010 },
+                    117: { x: 760, y: 1010 },
+                    118: { x: 1100, y: 1010 },
+                    119: { x: 1440, y: 1010 },
+                    120: { x: 1780, y: 1010 },
+                    121: { x: 2120, y: 1010 },
+                    122: { x: 2460, y: 1010 },
+                    123: { x: 2800, y: 1010 },
+                    124: { x: 80, y: 1300 },
+                    125: { x: 420, y: 1300 },
+                    126: { x: 760, y: 1300 },
+                    127: { x: 1100, y: 1300 },
+                    128: { x: 1440, y: 1300 },
+                    129: { x: 1780, y: 1300 },
+                    130: { x: 2120, y: 1300 },
+                    150: { x: 1020, y: 130 },
+                    151: { x: 1020, y: 230 },
+                    152: { x: 1400, y: 130 },
+                    153: { x: 1400, y: 230 }
+                };
+                return nodes.map(node => layoutOverrides[node.id] ? { ...node, ...layoutOverrides[node.id] } : node);
+            })(),
+            next_id: 155,
             workflow_variables: [
                 {
                     id: variableStoryId,
@@ -1870,16 +2079,22 @@ END`,
                     defaultValue: JSON.stringify(buildDemoReportSummaryPayload(), null, 2)
                 },
                 {
-                    id: variableModelId,
-                    name: '农业环境抽象模型 JSON',
+                    id: variableEnvModelId,
+                    name: '环境建模结果 JSON',
                     dataType: 'string',
                     defaultValue: buildDemoModelDefaultValue()
+                },
+                {
+                    id: variableSceneModelId,
+                    name: '三维场景模型 JSON',
+                    dataType: 'string',
+                    defaultValue: buildDemoScene3dPayload()
                 }
             ],
             workflow_ports: [
                 {
                     id: 'demo-port-model',
-                    name: 'agriTwinModel',
+                    name: 'environmentModelJson',
                     dataType: 'string',
                     nodeId: 117,
                     field: 'outputValue'
@@ -1974,6 +2189,13 @@ END`,
                     dataType: 'string',
                     nodeId: 130,
                     field: 'outputValue'
+                },
+                {
+                    id: 'demo-port-scene3d',
+                    name: 'scene3dModelJson',
+                    dataType: 'string',
+                    nodeId: 132,
+                    field: 'outputValue'
                 }
             ]
         }
@@ -2039,8 +2261,8 @@ function buildDemoScreenProject() {
         data: {
             demoVersion: DEMO_VERSION,
             page: {
-                width: 1680,
-                height: 2348,
+                width: DEMO_SCREEN_WIDTH,
+                height: DEMO_SCREEN_HEIGHT,
                 background: 'radial-gradient(circle at 18% 18%, rgba(59, 130, 246, 0.18), transparent 24%), radial-gradient(circle at 82% 12%, rgba(16, 185, 129, 0.20), transparent 26%), linear-gradient(145deg, #09131c 0%, #102436 42%, #153b34 100%)'
             },
             components: (() => {
@@ -2264,9 +2486,9 @@ function buildDemoScreenProject() {
                     x: 56,
                     y: 1048,
                     width: 506,
-                    height: 260,
+                    height: 520,
                     props: {
-                        title: '农业环境抽象模型',
+                        title: '农业环境建模',
                         jsonText: buildDemoModelDefaultValue(),
                         source: portSource('demo-port-model')
                     }
@@ -2311,24 +2533,24 @@ function buildDemoScreenProject() {
                     x: 586,
                     y: 1048,
                     width: 506,
-                    height: 260,
+                    height: 420,
                     props: {
                         title: '气候趋势预测',
                         jsonText: buildDemoModelDefaultValue(),
-                        source: portSource('demo-port-model')
+                        source: portSource('demo-port-forecast-summary')
                     }
                 },
                 {
                     id: 14,
                     type: 'agri-yield',
                     x: 56,
-                    y: 1952,
+                    y: 2904,
                     width: 772,
-                    height: 286,
+                    height: 470,
                     props: {
                         title: '产量预测',
                         jsonText: buildDemoModelDefaultValue(),
-                        source: portSource('demo-port-model')
+                        source: portSource('demo-port-yield-summary')
                     }
                 },
                 createChartComponent(
@@ -2336,7 +2558,7 @@ function buildDemoScreenProject() {
                     1116,
                     1048,
                     508,
-                    260,
+                    420,
                     '产量影响因子',
                     'bar',
                     buildDemoYieldFactorCsv(),
@@ -2352,13 +2574,27 @@ function buildDemoScreenProject() {
                     id: 15,
                     type: 'agri-decision',
                     x: 852,
-                    y: 1952,
+                    y: 2904,
                     width: 772,
-                    height: 286,
+                    height: 470,
                     props: {
                         title: '辅助决策',
                         jsonText: buildDemoModelDefaultValue(),
-                        source: portSource('demo-port-model')
+                        source: portSource('demo-port-decision-summary')
+                    }
+                },
+                {
+                    id: 26,
+                    type: 'agri-scene3d',
+                    x: 56,
+                    y: 2360,
+                    width: 1568,
+                    height: 520,
+                    props: {
+                        title: '3D 环境场景联动演示',
+                        activeLayer: 'soil_moisture',
+                        jsonText: buildDemoScene3dPayload(),
+                        source: portSource('demo-port-scene3d')
                     }
                 },
                 createSummaryComponent(16, 56, 1332, 360, 280, '总览摘要卡', 'demo-port-overview-summary', buildDemoOverviewSummaryPayload()),
@@ -2368,15 +2604,103 @@ function buildDemoScreenProject() {
                 createSummaryComponent(20, 56, 1636, 476, 280, '气候预测摘要卡', 'demo-port-forecast-summary', buildDemoForecastSummaryPayload()),
                 createSummaryComponent(21, 548, 1636, 476, 280, '产量预测摘要卡', 'demo-port-yield-summary', buildDemoYieldSummaryPayload()),
                 createSummaryComponent(22, 1040, 1636, 504, 280, '决策摘要卡', 'demo-port-decision-summary', buildDemoDecisionSummaryPayload())
+                ,
+                {
+                    id: 27,
+                    type: 'text',
+                    x: 56,
+                    y: 318,
+                    width: 900,
+                    height: 36,
+                    props: {
+                        text: '现场态势：传感器 / 天气 / 抓拍 / 风险',
+                        fontSize: 22,
+                        color: '#bfdbfe',
+                        fontWeight: '700',
+                        textAlign: 'left',
+                        backgroundColor: 'transparent',
+                        source: manualSource()
+                    }
+                },
+                {
+                    id: 28,
+                    type: 'text',
+                    x: 56,
+                    y: 718,
+                    width: 900,
+                    height: 36,
+                    props: {
+                        text: '趋势图表：温湿度 / 土壤 / 光照 / 产量因素',
+                        fontSize: 22,
+                        color: '#bbf7d0',
+                        fontWeight: '700',
+                        textAlign: 'left',
+                        backgroundColor: 'transparent',
+                        source: manualSource()
+                    }
+                },
+                {
+                    id: 29,
+                    type: 'text',
+                    x: 56,
+                    y: 1118,
+                    width: 1180,
+                    height: 36,
+                    props: {
+                        text: '模型预测：农业环境建模 / 气候 / 产量 / 辅助决策 / 三维场景',
+                        fontSize: 22,
+                        color: '#fde68a',
+                        fontWeight: '700',
+                        textAlign: 'left',
+                        backgroundColor: 'transparent',
+                        source: manualSource()
+                    }
+                },
+                {
+                    id: 30,
+                    type: 'text',
+                    x: 56,
+                    y: 1678,
+                    width: 1280,
+                    height: 36,
+                    props: {
+                        text: '分析摘要：总览 / 告警 / 建议 / 预测 / 产量 / 决策 / 报告',
+                        fontSize: 22,
+                        color: '#e9d5ff',
+                        fontWeight: '700',
+                        textAlign: 'left',
+                        backgroundColor: 'transparent',
+                        source: manualSource()
+                    }
+                }
                 ];
                 const layoutOverrides = {
-                    16: { x: 56, y: 1332, width: 374, height: 280 },
-                    17: { x: 454, y: 1332, width: 374, height: 280 },
-                    18: { x: 852, y: 1332, width: 374, height: 280 },
-                    19: { x: 1250, y: 1332, width: 374, height: 280 },
-                    20: { x: 56, y: 1636, width: 506, height: 280 },
-                    21: { x: 586, y: 1636, width: 506, height: 280 },
-                    22: { x: 1116, y: 1636, width: 508, height: 280 }
+                    1: { x: 56, y: 36, width: 2700, height: 76, props: { ...components.find(item => item.id === 1).props, fontSize: 52 } },
+                    2: { x: 56, y: 122, width: 2700, height: 76, props: { ...components.find(item => item.id === 2).props, fontSize: 22 } },
+                    3: { x: 3064, y: 46, width: 720, height: 44 },
+                    4: { x: 3064, y: 98, width: 720, height: 98 },
+                    5: { x: 56, y: 220, width: 3728, height: 86, props: { ...components.find(item => item.id === 5).props, fontSize: 18 } },
+                    6: { x: 56, y: 360, width: 728, height: 360 },
+                    7: { x: 1558, y: 360, width: 728, height: 360 },
+                    8: { x: 807, y: 360, width: 728, height: 360 },
+                    9: { x: 2309, y: 360, width: 728, height: 360 },
+                    10: { x: 56, y: 760, width: 728, height: 360 },
+                    11: { x: 807, y: 760, width: 728, height: 360 },
+                    12: { x: 56, y: 1160, width: 728, height: 520 },
+                    13: { x: 807, y: 1160, width: 728, height: 520 },
+                    14: { x: 1558, y: 1160, width: 728, height: 520 },
+                    15: { x: 2309, y: 1160, width: 728, height: 520 },
+                    16: { x: 56, y: 1720, width: 508, height: 420 },
+                    17: { x: 588, y: 1720, width: 508, height: 420 },
+                    18: { x: 1120, y: 1720, width: 508, height: 420 },
+                    19: { x: 1652, y: 1720, width: 508, height: 420 },
+                    20: { x: 2184, y: 1720, width: 508, height: 420 },
+                    21: { x: 2716, y: 1720, width: 508, height: 420 },
+                    22: { x: 3248, y: 1720, width: 508, height: 420 },
+                    23: { x: 1558, y: 760, width: 728, height: 360 },
+                    24: { x: 3060, y: 360, width: 724, height: 360 },
+                    25: { x: 2309, y: 760, width: 728, height: 360 },
+                    26: { x: 3060, y: 1160, width: 724, height: 520 }
                 };
 
                 return components.map(component => (
@@ -2385,7 +2709,7 @@ function buildDemoScreenProject() {
                         : component
                 ));
             })(),
-            next_id: 26
+            next_id: 31
         }
     };
 }
@@ -2507,7 +2831,11 @@ export function ensureDemoProjects() {
     }
 
     const screenProject = getProjectById(DEMO_SCREEN_PROJECT_ID);
-    if (!screenProject || Number(screenProject.data?.demoVersion || 0) < DEMO_VERSION) {
+    const screenNeedsRefresh = !screenProject
+        || Number(screenProject.data?.demoVersion || 0) < DEMO_VERSION
+        || Number(screenProject.data?.page?.width) !== DEMO_SCREEN_WIDTH
+        || Number(screenProject.data?.page?.height) !== DEMO_SCREEN_HEIGHT;
+    if (screenNeedsRefresh) {
         upsertProjectRecord({
             ...buildDemoScreenProject(),
             createdAt: screenProject?.createdAt || getNowIso(),

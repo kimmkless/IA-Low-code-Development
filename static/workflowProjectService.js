@@ -72,9 +72,34 @@ export function normalizeWorkflowPort(port, index = 0) {
     return normalized;
 }
 
+function normalizeWorkflowNode(node) {
+    const normalized = {
+        ...(node || {}),
+        properties: { ...((node && node.properties) || {}) }
+    };
+
+    if (normalized.type === 'abstract_data_model') {
+        const props = normalized.properties || {};
+        normalized.type = 'environment_model';
+        normalized.properties = {
+            name: '农业环境建模',
+            inputVariableId: props.inputVariableId || null,
+            deviceId: props.deviceId || '',
+            sampleLimit: Number.isFinite(Number(props.minPoints)) ? Number(props.minPoints) : 24,
+            method: props.method || 'weighted_index',
+            targetVariableId: props.targetVariableId || null,
+            nextNodeId: props.nextNodeId ?? null,
+            portPositions: props.portPositions || {},
+            breakpoint: props.breakpoint === true
+        };
+    }
+
+    return normalized;
+}
+
 function normalizeWorkflowData(data) {
     return {
-        nodes: Array.isArray(data?.nodes) ? data.nodes : [],
+        nodes: Array.isArray(data?.nodes) ? data.nodes.map(normalizeWorkflowNode) : [],
         next_id: Number.isFinite(Number(data?.next_id)) ? Number(data.next_id) : 100,
         workflow_ports: Array.isArray(data?.workflow_ports)
             ? data.workflow_ports.map(normalizeWorkflowPort)

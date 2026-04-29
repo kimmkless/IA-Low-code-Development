@@ -1,5 +1,7 @@
 ﻿from __future__ import annotations
 
+import csv
+import io
 import json
 from typing import Any
 
@@ -8,6 +10,7 @@ from environment_model import (
     build_data_packet,
     build_environment_analysis_summary,
     build_environment_model,
+    build_media_scene_model,
 )
 from workflow_prediction_service import run_workflow_prediction
 from workflow_static_check import validate_workflow_static
@@ -102,13 +105,38 @@ def resolve_variable_payload(
 
 
 def to_csv_text(raw_value: Any) -> str:
+    def stringify_cell(value: Any) -> str:
+        if isinstance(value, (dict, list)):
+            return json.dumps(value, ensure_ascii=False)
+        return "" if value is None else str(value)
+
+    def write_rows(headers: list[str], rows: list[dict[str, Any]]) -> str:
+        buffer = io.StringIO()
+        writer = csv.DictWriter(buffer, fieldnames=headers, extrasaction="ignore", lineterminator="\n")
+        writer.writeheader()
+        for row in rows:
+            writer.writerow({key: stringify_cell(row.get(key)) for key in headers})
+        return buffer.getvalue().strip()
+
     if isinstance(raw_value, list) and raw_value and isinstance(raw_value[0], dict):
         headers = list(raw_value[0].keys())
-        rows = [",".join(str(row.get(key, "")) for key in headers) for row in raw_value]
-        return ",".join(headers) + ("\n" + "\n".join(rows) if rows else "")
+        return write_rows(headers, raw_value)
     if isinstance(raw_value, dict):
+        records = raw_value.get("records")
+        if isinstance(records, list) and records and isinstance(records[0], dict):
+            headers: list[str] = []
+            seen = set()
+            for row in records:
+                for key in row.keys():
+                    if key not in seen:
+                        seen.add(key)
+                        headers.append(key)
+            return write_rows(headers, records)
+        latest = raw_value.get("latest")
+        if isinstance(latest, dict):
+            return write_rows(list(latest.keys()), [latest])
         headers = list(raw_value.keys())
-        return ",".join(headers) + ("\n" + ",".join(str(raw_value.get(key, "")) for key in headers) if headers else "")
+        return write_rows(headers, [raw_value]) if headers else ""
     return "" if raw_value is None else str(raw_value)
 
 
@@ -154,6 +182,30 @@ def run_readonly_query(sql: str) -> list[dict[str, Any]]:
     cursor.execute(normalized)
     rows = cursor.fetchall()
     return [dict(row) for row in rows]
+
+
+def build_device_environment_model(
+    *,
+    device_id: str = "SmartAgriculture_thermometer",
+    min_points: int = 24,
+    method: str = "weighted_index",
+) -> dict[str, Any]:
+    sample_limit = max(1, min(safe_int(min_points, 24), 240))
+    rows = sensor_db.get_latest_sensor_data(device_id or "SmartAgriculture_thermometer", sample_limit)
+    packet = build_data_packet(
+        source_node_type="environment_model",
+        source_name="调试设备历史采样",
+        records=list(reversed(rows)),
+    )
+    model = build_environment_model(packet, method=method)
+    model.update({
+        "device_id": device_id,
+        "requiredSampleCount": sample_limit,
+        "model_id": f"environment-model-{device_id}-{model.get('sampleCount', len(rows))}",
+        "model_name": "农业环境建模",
+        "sourceMode": "device_history",
+    })
+    return model
 
 
 def create_session(payload: dict[str, Any] | list[dict[str, Any]]) -> dict[str, Any]:
@@ -255,6 +307,9 @@ def _node_debug_summary(node: dict[str, Any] | None, variables_by_id: dict[str, 
         input_variable = variables_by_id.get(str(props.get("inputVariableId")))
         target_variable = variables_by_id.get(str(props.get("targetVariableId")))
         lines.append(f"inputVariable = {input_variable.get('name') if input_variable else 'unknown'}")
+        if not input_variable:
+            lines.append(f"deviceId = {props.get('deviceId', '')!r}")
+            lines.append(f"sampleLimit = {safe_int(props.get('sampleLimit', 24))}")
         lines.append(f"method = {props.get('method', 'weighted_index')!r}")
         lines.append(f"targetVariable = {target_variable.get('name') if target_variable else 'unknown'}")
     elif node_type == "analytics_summary":
@@ -265,6 +320,7 @@ def _node_debug_summary(node: dict[str, Any] | None, variables_by_id: dict[str, 
         variable = variables_by_id.get(str(props.get("targetVariableId")))
         lines.append(f"targetVariable = {variable.get('name') if variable else 'unknown'}")
     elif node_type == "abstract_data_model":
+        lines.append("legacy = environment_model")
         lines.append(f"deviceId = {props.get('deviceId', '')!r}")
         lines.append(f"hours = {safe_int(props.get('hours', 168))}")
         lines.append(f"minPoints = {safe_int(props.get('minPoints', 24))}")
@@ -477,8 +533,20 @@ def step_once(session: dict[str, Any]) -> tuple[list[str], bool]:
         _write_payload_to_variable(session, props.get("targetVariableId"), payload, logs)
         logs.extend(_goto(session, props.get("nextNodeId")))
     elif node_type == "environment_model":
-        input_payload = resolve_variable_payload(props.get("inputVariableId"), variable_values, variables_by_id)
         method = str(props.get("method") or "weighted_index").strip() or "weighted_index"
+        input_variable_id = props.get("inputVariableId")
+        if input_variable_id:
+            input_payload = resolve_variable_payload(input_variable_id, variable_values, variables_by_id)
+        else:
+            device_id = str(props.get("deviceId") or "").strip() or "SmartAgriculture_thermometer"
+            sample_limit = max(1, min(safe_int(props.get("sampleLimit", 24)), 240))
+            rows = sensor_db.get_latest_sensor_data(device_id, sample_limit)
+            input_payload = build_data_packet(
+                source_node_type="environment_model",
+                source_name=node_name(node),
+                records=list(reversed(rows)),
+            )
+            logs.append(f"环境建模使用设备历史采样: device={device_id}, rows={len(rows)}")
         try:
             payload = build_environment_model(input_payload, method=method)
             logs.append(
@@ -488,6 +556,45 @@ def step_once(session: dict[str, Any]) -> tuple[list[str], bool]:
         except Exception as exc:
             payload = {"status": "error", "message": str(exc)}
             logs.append(f"环境建模失败: {exc}")
+        _write_payload_to_variable(session, props.get("targetVariableId"), payload, logs)
+        logs.extend(_goto(session, props.get("nextNodeId")))
+    elif node_type == "media_scene_model":
+        analysis_payload = resolve_variable_payload(props.get("inputVariableId"), variable_values, variables_by_id)
+        media_source = str(props.get("mediaDataUrl") or props.get("mediaUrl") or "").strip()
+        try:
+            visualization_options = {
+                "defaultLayer": str(props.get("activeLayer") or "soil_moisture"),
+                "layerVisibility": {
+                    "soil_moisture": bool(props.get("showSoilLayer", True)),
+                    "rainfall": bool(props.get("showRainfallLayer", True)),
+                    "rain_forecast": bool(props.get("showForecastLayer", True)),
+                    "elevation": bool(props.get("showElevationLayer", True)),
+                },
+                "thresholds": {
+                    "soil": {
+                        "dry": safe_int(props.get("soilDryThreshold", 35)),
+                        "wet": safe_int(props.get("soilWetThreshold", 62)),
+                    },
+                    "rain": {
+                        "light": safe_int(props.get("rainLightThreshold", 1)),
+                        "heavy": safe_int(props.get("rainHeavyThreshold", 5)),
+                    },
+                },
+                "colorScheme": str(props.get("colorScheme") or "default"),
+            }
+            payload = build_media_scene_model(
+                media_source,
+                analysis_payload,
+                media_type=str(props.get("mediaType") or ""),
+                file_name=str(props.get("mediaFileName") or ""),
+                active_layer=str(props.get("activeLayer") or "soil_moisture"),
+                visualization_options=visualization_options,
+            )
+            grid = (payload.get("model") or {}).get("grid") or {}
+            logs.append(f"3D场景建模完成: grid={grid.get('columns')}x{grid.get('rows')}, layer={payload.get('activeLayer')}")
+        except Exception as exc:
+            payload = {"status": "error", "message": str(exc)}
+            logs.append(f"3D场景建模失败: {exc}")
         _write_payload_to_variable(session, props.get("targetVariableId"), payload, logs)
         logs.extend(_goto(session, props.get("nextNodeId")))
     elif node_type == "analytics_summary":
@@ -519,21 +626,20 @@ def step_once(session: dict[str, Any]) -> tuple[list[str], bool]:
         logs.extend(_goto(session, props.get("nextNodeId")))
     elif node_type == "abstract_data_model":
         device_id = str(props.get("deviceId") or "").strip() or "SmartAgriculture_thermometer"
-        hours = max(24, min(safe_int(props.get("hours", 168)), 336))
         min_points = max(12, min(safe_int(props.get("minPoints", 24)), 240))
         payload: Any = {}
         try:
-            payload = sensor_db.build_abstract_data_model(
+            payload = build_device_environment_model(
                 device_id=device_id,
-                hours=hours,
                 min_points=min_points,
             )
-            status = payload.get("status", "unknown") if isinstance(payload, dict) else "unknown"
-            model_name = payload.get("model_name", "unknown") if isinstance(payload, dict) else "unknown"
-            logs.append(f"抽象数据模型构建完成: status={status}, model={model_name}")
+            logs.append(
+                f"旧版模型节点已由农业环境建模代替执行: "
+                f"score={payload.get('environmentScore')}, level={payload.get('environmentLevel')}"
+            )
         except Exception as exc:
             payload = {"status": "error", "message": str(exc)}
-            logs.append(f"抽象数据模型构建失败: {exc}")
+            logs.append(f"农业环境建模代替执行失败: {exc}")
         _write_payload_to_variable(session, props.get("targetVariableId"), payload, logs)
         logs.extend(_goto(session, props.get("nextNodeId")))
     elif node_type == "loop":
